@@ -1,0 +1,946 @@
+<script>
+  import {
+    libCreateFolder,
+    libRenameFolder,
+    libDeleteFolder,
+    libSetFolderColor,
+    libSetFolderIcon,
+    libSaveItem,
+    libDeleteItem,
+    libMoveItem,
+    libToggleFavorite,
+    clipCopy,
+    pickSaveDoc,
+    saveTextFile,
+  } from "./api.js";
+  import { extractVars, itemVars, itemPlainText, typeMeta } from "./vars.js";
+  import Icon from "./Icon.svelte";
+
+  // props (library is bindable so imports/webhook refreshes from the parent flow in)
+  let { library = $bindable(), profiles = [], flash, onFill } = $props();
+
+  const ALL = "__all";
+  const FAV = "__fav";
+
+  let activeId = $state(ALL);
+  let search = $state("");
+  let selectedTags = $state([]);
+  let colorInput; // hidden <input type=color>
+
+  let realFolders = $derived(library.folders || []);
+  let activeFolder = $derived(realFolders.find((f) => f.id === activeId) || null);
+  let isVirtual = $derived(activeId === ALL || activeId === FAV);
+
+  // Every item in the current scope, tagged with its folder for context.
+  let scopedEntries = $derived.by(() => {
+    const out = [];
+    for (const f of realFolders) {
+      if (!isVirtual && f.id !== activeId) continue;
+      for (const i of f.items || []) {
+        if (activeId === FAV && !i.favorite) continue;
+        out.push({ item: i, folderId: f.id, folderName: f.name, folderColor: f.color, folderIcon: f.icon });
+      }
+    }
+    return out;
+  });
+
+  // Tags present in the current scope, for the filter chips.
+  let scopeTags = $derived.by(() => {
+    const set = new Set();
+    for (const e of scopedEntries) for (const t of e.item.tags || []) set.add(t);
+    return [...set].sort();
+  });
+
+  let visible = $derived.by(() => {
+    const q = search.trim().toLowerCase();
+    let list = scopedEntries;
+    if (q) {
+      list = list.filter(({ item: i }) =>
+        i.name.toLowerCase().includes(q) ||
+        (i.text || "").toLowerCase().includes(q) ||
+        (i.item_type || "").toLowerCase().includes(q) ||
+        (i.steps || []).some((s) => s.title.toLowerCase().includes(q) || s.text.toLowerCase().includes(q)) ||
+        (i.tags || []).some((t) => t.toLowerCase().includes(q)),
+      );
+    }
+    if (selectedTags.length) {
+      list = list.filter(({ item: i }) => (i.tags || []).some((t) => selectedTags.includes(t)));
+    }
+    return [...list].sort(
+      (a, b) => Number(b.item.favorite) - Number(a.item.favorite) || a.item.name.localeCompare(b.item.name),
+    );
+  });
+
+  function toggleTag(t) {
+    selectedTags = selectedTags.includes(t) ? selectedTags.filter((x) => x !== t) : [...selectedTags, t];
+  }
+
+  // ── Folder actions ──
+  async function addFolder() {
+    const name = prompt("New folder name:");
+    if (!name || !name.trim()) return;
+    library = await libCreateFolder(name.trim());
+    activeId = library.folders[library.folders.length - 1].id;
+  }
+  async function renameFolder() {
+    if (!activeFolder) return;
+    const name = prompt("Rename folder:", activeFolder.name);
+    if (!name || !name.trim()) return;
+    library = await libRenameFolder(activeFolder.id, name.trim());
+  }
+  async function deleteFolder() {
+    if (!activeFolder) return;
+    const n = activeFolder.items.length;
+    if (!confirm(`Delete folder “${activeFolder.name}”${n ? ` and its ${n} item(s)` : ""}?`)) return;
+    library = await libDeleteFolder(activeFolder.id);
+    activeId = ALL;
+  }
+  async function pickFolderIcon() {
+    if (!activeFolder) return;
+    const icon = prompt("Folder icon (an emoji):", activeFolder.icon || "📁");
+    if (icon === null) return;
+    library = await libSetFolderIcon(activeFolder.id, icon.trim());
+  }
+  async function folderColor(e) {
+    if (!activeFolder) return;
+    library = await libSetFolderColor(activeFolder.id, e.target.value);
+  }
+
+  // ── Item editor ──
+  let editorOpen = $state(false);
+  let editingId = $state(null);
+  let editingFolderId = $state(null);
+  let fName = $state("");
+  let fType = $state("");
+  let fTags = $state("");
+  let fKind = $state("template");
+  let fText = $state("");
+  let fSteps = $state([]);
+  let fFolderId = $state(null);
+
+  let editorVars = $derived(
+    fKind === "sop"
+      ? (() => {
+          const all = [];
+          for (const s of fSteps) for (const v of extractVars(s.text)) if (!all.includes(v)) all.push(v);
+          return all;
+        })()
+      : extractVars(fText),
+  );
+
+  function defaultFolderId() {
+    return activeFolder ? activeFolder.id : realFolders[0]?.id || null;
+  }
+
+  function openNewItem() {
+    if (!realFolders.length) {
+      flash("Create a folder first");
+      return;
+    }
+    editingId = null;
+    editingFolderId = defaultFolderId();
+    fFolderId = defaultFolderId();
+    fName = "";
+    fType = "";
+    fTags = "";
+    fKind = "template";
+    fText = "";
+    fSteps = [{ id: "", title: "Step 1", text: "" }];
+    editorOpen = true;
+  }
+  function openEditItem(folderId, item) {
+    editingId = item.id;
+    editingFolderId = folderId;
+    fFolderId = folderId;
+    fName = item.name;
+    fType = item.item_type || "";
+    fTags = (item.tags || []).join(", ");
+    fKind = item.kind === "sop" ? "sop" : "template";
+    fText = item.text || "";
+    fSteps = (item.steps || []).map((s) => ({ ...s }));
+    if (fKind === "sop" && fSteps.length === 0) fSteps = [{ id: "", title: "Step 1", text: "" }];
+    editorOpen = true;
+  }
+  function addStep() {
+    fSteps = [...fSteps, { id: "", title: `Step ${fSteps.length + 1}`, text: "" }];
+  }
+  function removeStep(i) {
+    fSteps = fSteps.filter((_, idx) => idx !== i);
+  }
+  function moveStep(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= fSteps.length) return;
+    const next = [...fSteps];
+    [next[i], next[j]] = [next[j], next[i]];
+    fSteps = next;
+  }
+  async function saveItem() {
+    const name = fName.trim();
+    if (!name) {
+      flash("Name is required");
+      return;
+    }
+    const tags = fTags.split(",").map((t) => t.trim()).filter(Boolean);
+    const item = {
+      id: editingId || "",
+      name,
+      kind: fKind,
+      type: fType.trim(),
+      text: fKind === "template" ? fText : "",
+      steps: fKind === "sop" ? fSteps.map((s) => ({ id: s.id || "", title: s.title, text: s.text })) : [],
+      tags,
+      favorite: false,
+      created_at: "",
+      updated_at: "",
+    };
+    // Preserve favorite when editing existing.
+    if (editingId) {
+      const existing = realFolders.find((f) => f.id === editingFolderId)?.items.find((i) => i.id === editingId);
+      if (existing) item.favorite = existing.favorite;
+    }
+    if (editingId && fFolderId !== editingFolderId) {
+      await libMoveItem(editingFolderId, fFolderId, editingId);
+    }
+    library = await libSaveItem(fFolderId, item);
+    editorOpen = false;
+    flash(editingId ? "Saved" : "Added");
+  }
+  async function deleteItem(folderId, item) {
+    if (!confirm(`Delete “${item.name}”?`)) return;
+    library = await libDeleteItem(folderId, item.id);
+  }
+  async function toggleFav(folderId, item) {
+    library = await libToggleFavorite(folderId, item.id);
+  }
+  async function copyRaw(item) {
+    const ok = await clipCopy(itemPlainText(item));
+    flash(ok ? "Copied" : "Copy failed");
+  }
+
+  // ── Multi-select (Ctrl/Cmd+click) — ordered, so selection order == copy order ──
+  let selected = $state([]); // item ids, in the order they were picked
+
+  function selIndex(id) {
+    return selected.indexOf(id);
+  }
+  function toggleSelect(id) {
+    selected = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+  }
+  function cardClick(e, item) {
+    // Ctrl/Cmd + click on the card body (not on an action button) toggles select.
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.target.closest && e.target.closest("button")) return;
+    e.preventDefault();
+    toggleSelect(item.id);
+  }
+  function clearSelection() {
+    selected = [];
+  }
+
+  // Resolve a selected id to its item + folder, preserving selection order.
+  let selectedEntries = $derived.by(() => {
+    const out = [];
+    for (const id of selected) {
+      for (const f of realFolders) {
+        const it = f.items.find((i) => i.id === id);
+        if (it) {
+          out.push({ item: it, folderName: f.name });
+          break;
+        }
+      }
+    }
+    return out;
+  });
+
+  // One combined document: each item as a "## Name" section, in picked order.
+  // SOP steps are expanded so a custom SOP reads as a clean sequence.
+  function combinedText() {
+    return selectedEntries
+      .map(({ item }) => {
+        if (item.kind === "sop") {
+          const steps = (item.steps || []).map((s) => `### ${s.title}\n\n${s.text}`).join("\n\n");
+          return `## ${item.name}\n\n${steps}`;
+        }
+        return `## ${item.name}\n\n${item.text || ""}`;
+      })
+      .join("\n\n---\n\n");
+  }
+
+  async function copyCombined() {
+    if (!selected.length) return;
+    const ok = await clipCopy(combinedText());
+    flash(ok ? `Copied ${selected.length} item${selected.length === 1 ? "" : "s"}` : "Copy failed");
+  }
+
+  async function exportSelectedMd() {
+    if (!selected.length) return;
+    const path = await pickSaveDoc("custom-sop.md");
+    if (!path) return;
+    try {
+      await saveTextFile(path, combinedText());
+      flash("Exported to file");
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  // Turn the picked items into one new SOP (great for assembling a client SOP).
+  function newSopFromSelection() {
+    if (!selected.length) return;
+    const steps = [];
+    for (const { item } of selectedEntries) {
+      if (item.kind === "sop") {
+        for (const s of item.steps || []) steps.push({ id: "", title: s.title, text: s.text });
+      } else {
+        steps.push({ id: "", title: item.name, text: item.text || "" });
+      }
+    }
+    editingId = null;
+    editingFolderId = defaultFolderId();
+    fFolderId = defaultFolderId();
+    fName = "";
+    fType = "";
+    fTags = "";
+    fKind = "sop";
+    fText = "";
+    fSteps = steps.length ? steps : [{ id: "", title: "Step 1", text: "" }];
+    editorOpen = true;
+  }
+
+  let totalItems = $derived(realFolders.reduce((n, f) => n + f.items.length, 0));
+  let favCount = $derived(realFolders.reduce((n, f) => n + f.items.filter((i) => i.favorite).length, 0));
+</script>
+
+<div class="layout">
+  <!-- Folder rail -->
+  <aside class="rail">
+    <div class="rail-head">
+      <span>Library</span>
+      <button class="icon-btn sm" onclick={addFolder} title="New folder"><Icon name="plus" size={15} /></button>
+    </div>
+    <ul class="folders">
+      <li>
+        <button class="folder" class:active={activeId === ALL} onclick={() => (activeId = ALL)}>
+          <span class="ficon"><Icon name="layers" size={16} /></span><span class="fname">All items</span><span class="count">{totalItems}</span>
+        </button>
+      </li>
+      <li>
+        <button class="folder" class:active={activeId === FAV} onclick={() => (activeId = FAV)}>
+          <span class="ficon"><Icon name="star" size={16} fill={activeId === FAV} /></span><span class="fname">Favorites</span><span class="count">{favCount}</span>
+        </button>
+      </li>
+      <li class="divider"></li>
+      {#each realFolders as f (f.id)}
+        <li>
+          <button class="folder" class:active={f.id === activeId} onclick={() => (activeId = f.id)}>
+            <span class="ficon" style:color={f.color || "inherit"}>
+              {#if f.icon}{f.icon}{:else}<Icon name="folder" size={16} />{/if}
+            </span>
+            <span class="fname">{f.name}</span>
+            <span class="count">{f.items.length}</span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+  </aside>
+
+  <!-- Main -->
+  <section class="main">
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="search-ic"><Icon name="search" size={16} /></span>
+        <input class="search" placeholder="Search {isVirtual ? 'all items' : activeFolder?.name || ''}…" bind:value={search} />
+      </div>
+      <button class="btn with-ic" onclick={openNewItem}><Icon name="plus" size={15} /> New item</button>
+    </div>
+
+    {#if !isVirtual && activeFolder}
+      <div class="folder-bar">
+        <span class="fb-icon">{#if activeFolder.icon}{activeFolder.icon}{:else}<Icon name="folder" size={17} />{/if}</span>
+        <strong>{activeFolder.name}</strong>
+        <span class="fcount">{activeFolder.items.length} item{activeFolder.items.length === 1 ? "" : "s"}</span>
+        <div class="folder-actions">
+          <button class="icon-btn" title="Set folder emoji" onclick={pickFolderIcon}><Icon name="sparkle" size={15} /></button>
+          <button class="icon-btn" title="Folder colour" onclick={() => colorInput?.click()}>
+            <span class="swatch" style:background={activeFolder.color || "var(--border)"}></span>
+          </button>
+          <input bind:this={colorInput} class="hidden-color" type="color" value={activeFolder.color || "#4f8cff"} onchange={folderColor} />
+          <button class="icon-btn" title="Rename" onclick={renameFolder}><Icon name="edit" size={15} /></button>
+          <button class="icon-btn" title="Delete folder" onclick={deleteFolder}><Icon name="trash" size={15} /></button>
+        </div>
+      </div>
+    {/if}
+
+    {#if scopeTags.length}
+      <div class="tagbar">
+        {#each scopeTags as t}
+          <button class="chip" class:on={selectedTags.includes(t)} onclick={() => toggleTag(t)}>{t}</button>
+        {/each}
+        {#if selectedTags.length}<button class="chip clear" onclick={() => (selectedTags = [])}>clear</button>{/if}
+      </div>
+    {/if}
+
+    {#if !realFolders.length}
+      <p class="empty">No folders yet.</p>
+    {:else if visible.length === 0}
+      <p class="empty">No items{search || selectedTags.length ? " match" : " yet"}.</p>
+    {:else}
+      <div class="grid">
+        {#each visible as { item, folderId, folderName, folderIcon } (item.id)}
+          {@const vars = itemVars(item)}
+          {@const tm = typeMeta(item.item_type)}
+          {@const pos = selIndex(item.id)}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <article class="card" class:fav={item.favorite} class:sel={pos >= 0} onclick={(e) => cardClick(e, item)}>
+            {#if pos >= 0}<span class="selnum">{pos + 1}</span>{/if}
+            <header>
+              <span class="name" title={item.name}>{item.name}</span>
+              <div class="actions">
+                <button class="star" class:on={item.favorite} title={item.favorite ? "Unpin" : "Pin"} onclick={() => toggleFav(folderId, item)}>
+                  <Icon name="star" size={15} fill={item.favorite} />
+                </button>
+                <button class="icon-btn xs" title="Edit" onclick={() => openEditItem(folderId, item)}><Icon name="edit" size={14} /></button>
+                <button class="icon-btn xs" title="Delete" onclick={() => deleteItem(folderId, item)}><Icon name="trash" size={14} /></button>
+              </div>
+            </header>
+
+            <div class="badges">
+              <span class="badge {item.kind}">
+                <Icon name={item.kind === "sop" ? "sop" : "template"} size={11} />
+                {item.kind === "sop" ? `SOP · ${item.steps.length}` : "Template"}
+              </span>
+              {#if tm}<span class="badge type">{tm.label}</span>{/if}
+              {#if isVirtual}
+                <span class="badge origin">
+                  {#if folderIcon}{folderIcon}{:else}<Icon name="folder" size={11} />{/if}
+                  {folderName}
+                </span>
+              {/if}
+            </div>
+
+            <p class="preview">{item.kind === "sop" ? item.steps[0]?.text || "" : item.text}</p>
+
+            {#if (item.tags || []).length}
+              <div class="tags">
+                {#each item.tags.slice(0, 3) as t}<span class="chip">{t}</span>{/each}
+                {#if item.tags.length > 3}<span class="chip">+{item.tags.length - 3}</span>{/if}
+              </div>
+            {/if}
+
+            <footer>
+              <button class="act" onclick={() => copyRaw(item)}><Icon name="copy" size={13} /> Copy</button>
+              {#if vars.length}<button class="act primary" onclick={() => onFill(item)}><Icon name="sparkle" size={13} /> Fill &amp; copy</button>{/if}
+            </footer>
+          </article>
+        {/each}
+      </div>
+    {/if}
+
+    {#if selected.length}
+      <div class="selbar">
+        <div class="selinfo">
+          <span class="selcount">{selected.length} selected</span>
+        </div>
+        <div class="selactions">
+          <button class="ghost" onclick={clearSelection}>Clear</button>
+          <button class="ghost" onclick={exportSelectedMd}><Icon name="reveal" size={14} /> Export .md</button>
+          <button class="ghost" onclick={newSopFromSelection}><Icon name="sop" size={14} /> New SOP</button>
+          <button class="btn" onclick={copyCombined}><Icon name="copy" size={14} /> Copy combined</button>
+        </div>
+      </div>
+    {/if}
+  </section>
+</div>
+
+<!-- Item editor -->
+{#if editorOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="overlay" onclick={(e) => e.target === e.currentTarget && (editorOpen = false)}>
+    <div class="modal wide">
+      <h3>{editingId ? "Edit item" : "New item"}</h3>
+
+      <div class="erow">
+        <label>Name<input class="field" bind:value={fName} placeholder="e.g. Cold outreach" /></label>
+        <label>Folder
+          <select class="field" bind:value={fFolderId}>
+            {#each realFolders as f (f.id)}<option value={f.id}>{f.name}</option>{/each}
+          </select>
+        </label>
+      </div>
+
+      <div class="erow">
+        <label>Type (optional)
+          <input class="field" list="type-list" bind:value={fType} placeholder="prompt / note / email…" />
+          <datalist id="type-list">
+            <option value="prompt"></option><option value="note"></option><option value="email"></option>
+            <option value="message"></option><option value="snippet"></option><option value="doc"></option>
+          </datalist>
+        </label>
+        <label>Tags (comma separated)<input class="field" bind:value={fTags} placeholder="email, copywriting" /></label>
+      </div>
+
+      <div class="kind">
+        <button class:active={fKind === "template"} onclick={() => (fKind = "template")}>Single text</button>
+        <button class:active={fKind === "sop"} onclick={() => (fKind = "sop")}>SOP (multi-step)</button>
+      </div>
+
+      {#if fKind === "template"}
+        <label>Text<textarea class="field" rows="10" bind:value={fText} placeholder="Hi {'{{firstName}}'}, …"></textarea></label>
+      {:else}
+        <div class="steps">
+          {#each fSteps as step, i (i)}
+            <div class="step">
+              <div class="step-head">
+                <input class="field step-title" bind:value={step.title} placeholder={`Step ${i + 1} title`} />
+                <div class="step-ctl">
+                  <button class="icon-btn" title="Up" onclick={() => moveStep(i, -1)} disabled={i === 0}><Icon name="chevronUp" size={14} /></button>
+                  <button class="icon-btn" title="Down" onclick={() => moveStep(i, 1)} disabled={i === fSteps.length - 1}><Icon name="chevronDown" size={14} /></button>
+                  <button class="icon-btn" title="Remove" onclick={() => removeStep(i)} disabled={fSteps.length === 1}><Icon name="close" size={14} /></button>
+                </div>
+              </div>
+              <textarea class="field" rows="4" bind:value={step.text} placeholder="Prompt text for this step…"></textarea>
+            </div>
+          {/each}
+          <button class="ghost with-ic" onclick={addStep}><Icon name="plus" size={14} /> Add step</button>
+        </div>
+      {/if}
+
+      {#if editorVars.length}
+        <p class="hint">{#each editorVars as v}<span class="vchip">{v}</span> {/each}</p>
+      {/if}
+
+      <div class="modal-actions">
+        <button class="ghost" onclick={() => (editorOpen = false)}>Cancel</button>
+        <button class="btn" onclick={saveItem}>Save</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .layout {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+  }
+  .rail {
+    width: 216px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    padding: 14px 12px;
+    overflow-y: auto;
+    background: color-mix(in srgb, var(--surface) 55%, transparent);
+  }
+  .rail-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 10px;
+    padding: 0 4px;
+  }
+  .icon-btn.sm {
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+  }
+  .folders {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 8px 6px;
+  }
+  .folder {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13.5px;
+    text-align: left;
+  }
+  .folder:hover {
+    background: var(--elevated);
+  }
+  .folder.active {
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    box-shadow: var(--edge);
+  }
+  .ficon {
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .fname {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .count {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .main {
+    flex: 1;
+    min-width: 0;
+    padding: 18px 22px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .search-wrap {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .search-ic {
+    position: absolute;
+    left: 12px;
+    color: var(--muted);
+    font-size: 15px;
+    pointer-events: none;
+  }
+  .search {
+    flex: 1;
+    padding: 9px 12px 9px 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--well);
+    color: var(--text);
+    font-size: 13px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+    transition: border-color 0.12s var(--ease);
+  }
+  .search:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .folder-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-size: 15px;
+  }
+  .fb-icon {
+    font-size: 16px;
+  }
+  .fcount {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .folder-actions {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+  }
+  .swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    display: block;
+  }
+  .hidden-color {
+    position: absolute;
+    width: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tagbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .chip.clear {
+    color: var(--muted);
+    border-style: dashed;
+    cursor: pointer;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+    align-content: start;
+  }
+  .card {
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    box-shadow: var(--shadow-card);
+    transition: border-color 0.12s var(--ease), transform 0.08s var(--ease);
+  }
+  .card:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    transform: translateY(-1px);
+  }
+  .card.fav {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+  .card.sel {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-card);
+  }
+  .selnum {
+    position: absolute;
+    top: -9px;
+    left: -9px;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-card);
+    z-index: 2;
+  }
+  .card header {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .name {
+    font-weight: 600;
+    flex: 1;
+    min-width: 0;
+    font-size: 14.5px;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
+  }
+  .icon-btn.xs {
+    width: 26px;
+    height: 26px;
+    font-size: 12px;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .card:hover .icon-btn.xs {
+    opacity: 1;
+  }
+  .star {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1;
+    padding: 3px;
+    opacity: 0;
+    transition: opacity 0.12s, color 0.12s;
+  }
+  .card:hover .star {
+    opacity: 1;
+  }
+  .star.on {
+    color: var(--accent);
+    opacity: 1;
+  }
+  .badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 7px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge.sop {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+  .badge.origin {
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .preview {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 1em;
+  }
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .card footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .act {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+  }
+  .act:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .act.primary {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+  .empty {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 8px;
+  }
+  .erow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .kind {
+    display: flex;
+    gap: 8px;
+  }
+  .kind button {
+    flex: 1;
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .kind button.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .step {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .step-head {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .step-title {
+    flex: 1;
+  }
+  .step-ctl {
+    display: flex;
+    gap: 3px;
+  }
+
+  /* Multi-select action bar (sticky at the bottom of the workspace) */
+  .selbar {
+    position: sticky;
+    bottom: 0;
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 14px;
+    background: var(--elevated);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal);
+    flex-wrap: wrap;
+  }
+  .selinfo {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+  }
+  .selcount {
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .selhint {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .selactions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+</style>
