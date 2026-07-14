@@ -24,6 +24,13 @@
   let fillItem = $state(null);
   let fillMode = $state("auto"); // auto | steps
 
+  // Compact / preview mode (persisted).
+  let compact = $state(localStorage.getItem("castline-compact") === "1");
+  function toggleCompact() {
+    compact = !compact;
+    localStorage.setItem("castline-compact", compact ? "1" : "0");
+  }
+
   // Active profile (top-right selector). When set, card Copy auto-fills it.
   let activeProfileId = $state(null);
   let profileMenuOpen = $state(false);
@@ -121,6 +128,10 @@
         {/if}
       </div>
 
+      <button class="ghost eye" class:on={compact} onclick={toggleCompact} title={compact ? "Show full cards" : "Compact view"}>
+        <Icon name={compact ? "eyeOff" : "eye"} size={16} />
+      </button>
+
       <button class="ghost search-cta" onclick={() => (quickOpen = true)}>
         <Icon name="command" size={15} /><span>Quick find</span><kbd>Ctrl K</kbd>
       </button>
@@ -135,11 +146,11 @@
 
   <main class="body">
     {#if view === "library"}
-      <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {flash} onFill={openFill} />
+      <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} {flash} onFill={openFill} />
     {:else if view === "profiles"}
       <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} {flash} onData={(d) => (profiles = d)} />
     {:else if view === "webhooks"}
-      <Webhooks {settings} {flash} onSettings={(s) => (settings = s)} />
+      <Webhooks {settings} folders={library.folders} {flash} onSettings={(s) => (settings = s)} />
     {:else if view === "settings"}
       <Settings {flash} onLibraryData={(d) => (library = d)} onProfilesData={(d) => (profiles = d)} />
     {/if}
@@ -296,6 +307,15 @@
   .mi.empty {
     color: var(--faint);
     cursor: default;
+  }
+  .eye {
+    padding: 8px 9px;
+    color: var(--muted);
+  }
+  .eye.on {
+    color: var(--accent-strong);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: var(--accent-soft);
   }
   .search-cta {
     display: flex;

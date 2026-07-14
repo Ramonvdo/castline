@@ -5,6 +5,8 @@
     libDeleteFolder,
     libSetFolderColor,
     libSetFolderIcon,
+    libReorderFolders,
+    libReorderItems,
     libSaveItem,
     libDeleteItem,
     libMoveItem,
@@ -13,13 +15,13 @@
     pickSaveDoc,
     saveTextFile,
   } from "./api.js";
-  import { extractVars, itemVars, itemPlainText, typeMeta, applyVars } from "./vars.js";
+  import { extractVars, itemVars, itemPlainText, applyVars } from "./vars.js";
   import Icon from "./Icon.svelte";
   import FolderIcon from "./FolderIcon.svelte";
   import { FOLDER_ICON_NAMES, FOLDER_COLORS } from "./foldericons.js";
 
   // props (library is bindable so imports/webhook refreshes from the parent flow in)
-  let { library = $bindable(), profiles = [], layout = [], activeProfile = null, flash, onFill } = $props();
+  let { library = $bindable(), profiles = [], layout = [], activeProfile = null, compact = false, flash, onFill } = $props();
 
   const ALL = "__all";
   const FAV = "__fav";
@@ -67,45 +69,143 @@
     if (selectedTags.length) {
       list = list.filter(({ item: i }) => (i.tags || []).some((t) => selectedTags.includes(t)));
     }
-    return [...list].sort(
-      (a, b) => Number(b.item.favorite) - Number(a.item.favorite) || a.item.name.localeCompare(b.item.name),
-    );
+    // A real folder keeps its manual (stored) order so drag-reorder is honoured;
+    // the All / Favorites views sort favourites-first then by name.
+    if (isVirtual) {
+      return [...list].sort(
+        (a, b) => Number(b.item.favorite) - Number(a.item.favorite) || a.item.name.localeCompare(b.item.name),
+      );
+    }
+    return list;
   });
 
   function toggleTag(t) {
     selectedTags = selectedTags.includes(t) ? selectedTags.filter((x) => x !== t) : [...selectedTags, t];
   }
 
-  // ── Folder actions ──
-  async function addFolder() {
-    const name = prompt("New folder name:");
-    if (!name || !name.trim()) return;
-    library = await libCreateFolder(name.trim());
-    activeId = library.folders[library.folders.length - 1].id;
+  // ── Folder create/edit modal (name + icon + colour) ──
+  let folderModalOpen = $state(false);
+  let fmMode = $state("new"); // "new" | "edit"
+  let fmId = $state(null);
+  let fmName = $state("");
+  let fmIcon = $state("folder");
+  let fmColor = $state("");
+  let fmConfirmDelete = $state(false);
+  let fmColorInput;
+
+  function openNewFolder() {
+    fmMode = "new";
+    fmId = null;
+    fmName = "";
+    fmIcon = "folder";
+    fmColor = "";
+    fmConfirmDelete = false;
+    folderModalOpen = true;
   }
-  async function renameFolder() {
+  function openEditFolder() {
     if (!activeFolder) return;
-    const name = prompt("Rename folder:", activeFolder.name);
-    if (!name || !name.trim()) return;
-    library = await libRenameFolder(activeFolder.id, name.trim());
+    fmMode = "edit";
+    fmId = activeFolder.id;
+    fmName = activeFolder.name;
+    fmIcon = activeFolder.icon || "folder";
+    fmColor = activeFolder.color || "";
+    fmConfirmDelete = false;
+    folderModalOpen = true;
   }
-  async function deleteFolder() {
-    if (!activeFolder) return;
-    const n = activeFolder.items.length;
-    if (!confirm(`Delete folder “${activeFolder.name}”${n ? ` and its ${n} item(s)` : ""}?`)) return;
-    library = await libDeleteFolder(activeFolder.id);
-    activeId = ALL;
+  async function saveFolder() {
+    const name = fmName.trim();
+    if (!name) {
+      flash("Folder name is required");
+      return;
+    }
+    if (fmMode === "new") {
+      let lib = await libCreateFolder(name);
+      const newId = lib.folders[lib.folders.length - 1].id;
+      lib = await libSetFolderIcon(newId, fmIcon);
+      if (fmColor) lib = await libSetFolderColor(newId, fmColor);
+      library = lib;
+      activeId = newId;
+    } else {
+      let lib = await libRenameFolder(fmId, name);
+      lib = await libSetFolderIcon(fmId, fmIcon);
+      lib = await libSetFolderColor(fmId, fmColor);
+      library = lib;
+    }
+    folderModalOpen = false;
+    flash(fmMode === "new" ? "Folder created" : "Folder saved");
   }
-  // ── Folder customization popover (icon + colour) ──
-  let customizeOpen = $state(false);
-  let colorInputEl;
-  async function setIcon(nameStr) {
-    if (!activeFolder) return;
-    library = await libSetFolderIcon(activeFolder.id, nameStr);
+  async function deleteFolderConfirmed() {
+    if (!fmId) return;
+    library = await libDeleteFolder(fmId);
+    if (activeId === fmId) activeId = ALL;
+    folderModalOpen = false;
   }
-  async function setColor(hex) {
-    if (!activeFolder) return;
-    library = await libSetFolderColor(activeFolder.id, hex);
+
+  // ── Drag & drop (folders reorder · items move/reorder) ──
+  let drag = $state(null); // { kind:'folder'|'item', id, fromFolderId }
+  let dropFolderId = $state(null); // rail folder highlighted as a drop target
+  let dropOnId = $state(null); // card highlighted (insertion)
+  let dropAfter = $state(false);
+
+  function clearDrag() {
+    drag = null;
+    dropFolderId = null;
+    dropOnId = null;
+  }
+  async function dropOnFolder(targetId) {
+    const d = drag;
+    dropFolderId = null;
+    if (!d) return;
+    if (d.kind === "folder" && d.id !== targetId) {
+      const ids = realFolders.map((f) => f.id);
+      const from = ids.indexOf(d.id);
+      const to = ids.indexOf(targetId);
+      if (from !== -1 && to !== -1) {
+        ids.splice(from, 1);
+        ids.splice(to, 0, d.id);
+        library = await libReorderFolders(ids);
+      }
+    } else if (d.kind === "item" && d.fromFolderId !== targetId) {
+      library = await libMoveItem(d.fromFolderId, targetId, d.id);
+    }
+    clearDrag();
+  }
+  async function dropOnCard(targetItemId, targetFolderId) {
+    const d = drag;
+    const after = dropAfter;
+    dropOnId = null;
+    if (!d || d.kind !== "item") {
+      clearDrag();
+      return;
+    }
+    // Cross-folder drop onto a card → move into that folder (appended).
+    if (d.fromFolderId !== targetFolderId) {
+      library = await libMoveItem(d.fromFolderId, targetFolderId, d.id);
+      clearDrag();
+      return;
+    }
+    // Same folder → reorder relative to the target card.
+    const folder = realFolders.find((f) => f.id === targetFolderId);
+    if (!folder) {
+      clearDrag();
+      return;
+    }
+    const ids = folder.items.map((i) => i.id);
+    const from = ids.indexOf(d.id);
+    if (from !== -1) ids.splice(from, 1);
+    let to = ids.indexOf(targetItemId);
+    if (to === -1) to = ids.length;
+    else if (after) to += 1;
+    ids.splice(to, 0, d.id);
+    library = await libReorderItems(targetFolderId, ids);
+    clearDrag();
+  }
+  function cardDragOver(e, itemId) {
+    if (!drag || drag.kind !== "item") return;
+    e.preventDefault();
+    const r = e.currentTarget.getBoundingClientRect();
+    dropAfter = e.clientX > r.left + r.width / 2;
+    dropOnId = itemId;
   }
 
   // ── Item editor ──
@@ -113,7 +213,6 @@
   let editingId = $state(null);
   let editingFolderId = $state(null);
   let fName = $state("");
-  let fType = $state("");
   let fTags = $state("");
   let fKind = $state("template");
   let fText = $state("");
@@ -143,7 +242,6 @@
     editingFolderId = defaultFolderId();
     fFolderId = defaultFolderId();
     fName = "";
-    fType = "";
     fTags = "";
     fKind = "template";
     fText = "";
@@ -155,7 +253,6 @@
     editingFolderId = folderId;
     fFolderId = folderId;
     fName = item.name;
-    fType = item.item_type || "";
     fTags = (item.tags || []).join(", ");
     fKind = item.kind === "sop" ? "sop" : "template";
     fText = item.text || "";
@@ -176,6 +273,10 @@
     [next[i], next[j]] = [next[j], next[i]];
     fSteps = next;
   }
+  function setKind(sop) {
+    fKind = sop ? "sop" : "template";
+    if (sop && fSteps.length === 0) fSteps = [{ id: "", title: "Step 1", text: "" }];
+  }
   async function saveItem() {
     const name = fName.trim();
     if (!name) {
@@ -187,7 +288,7 @@
       id: editingId || "",
       name,
       kind: fKind,
-      type: fType.trim(),
+      type: "",
       text: fKind === "template" ? fText : "",
       steps: fKind === "sop" ? fSteps.map((s) => ({ id: s.id || "", title: s.title, text: s.text })) : [],
       tags,
@@ -232,15 +333,13 @@
     selected = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
   }
   function cardClick(e, item) {
-    // Buttons handle their own clicks.
+    // Ctrl/Cmd + click toggles multi-select (drag handles move/reorder; the Copy
+    // button copies). A plain click does nothing.
     if (e.target.closest && e.target.closest("button")) return;
-    // Ctrl/Cmd + click toggles multi-select; a plain click copies the item.
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       toggleSelect(item.id);
-      return;
     }
-    copyItem(item);
   }
   function clearSelection() {
     selected = [];
@@ -308,7 +407,6 @@
     editingFolderId = defaultFolderId();
     fFolderId = defaultFolderId();
     fName = "";
-    fType = "";
     fTags = "";
     fKind = "sop";
     fText = "";
@@ -323,24 +421,31 @@
 <div class="layout">
   <!-- Folder rail -->
   <aside class="rail">
-    <div class="rail-head">
-      <span>Library</span>
-      <button class="icon-btn sm" onclick={addFolder} title="New folder"><Icon name="plus" size={15} /></button>
+    <div class="rail-head"><span>Library</span></div>
+    <div class="virt-row">
+      <button class="virt" class:active={activeId === ALL} onclick={() => (activeId = ALL)}>
+        <Icon name="layers" size={15} /><span class="vl">All</span><span class="vc">{totalItems}</span>
+      </button>
+      <button class="virt" class:active={activeId === FAV} onclick={() => (activeId = FAV)}>
+        <Icon name="star" size={15} fill={activeId === FAV} /><span class="vl">Favorites</span><span class="vc">{favCount}</span>
+      </button>
     </div>
+
+    <div class="rail-sub">Folders</div>
     <ul class="folders">
-      <li>
-        <button class="folder" class:active={activeId === ALL} onclick={() => (activeId = ALL)}>
-          <span class="ficon"><Icon name="layers" size={16} /></span><span class="fname">All items</span><span class="count">{totalItems}</span>
-        </button>
-      </li>
-      <li>
-        <button class="folder" class:active={activeId === FAV} onclick={() => (activeId = FAV)}>
-          <span class="ficon"><Icon name="star" size={16} fill={activeId === FAV} /></span><span class="fname">Favorites</span><span class="count">{favCount}</span>
-        </button>
-      </li>
-      <li class="divider"></li>
       {#each realFolders as f (f.id)}
-        <li>
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <li
+          class="folder-li"
+          class:drop={dropFolderId === f.id}
+          class:ghost={drag?.kind === "folder" && drag.id === f.id}
+          draggable="true"
+          ondragstart={(e) => { drag = { kind: "folder", id: f.id }; e.dataTransfer.effectAllowed = "move"; }}
+          ondragend={clearDrag}
+          ondragover={(e) => { if (drag) { e.preventDefault(); dropFolderId = f.id; } }}
+          ondragleave={() => { if (dropFolderId === f.id) dropFolderId = null; }}
+          ondrop={() => dropOnFolder(f.id)}
+        >
           <button class="folder" class:active={f.id === activeId} onclick={() => (activeId = f.id)}>
             <span class="ficon"><FolderIcon name={f.icon || "folder"} color={f.color || "var(--muted)"} size={16} /></span>
             <span class="fname">{f.name}</span>
@@ -349,6 +454,7 @@
         </li>
       {/each}
     </ul>
+    <button class="newfolder" onclick={openNewFolder}><Icon name="plus" size={15} /> New folder</button>
   </aside>
 
   <!-- Main -->
@@ -366,34 +472,7 @@
         <span class="fb-icon"><FolderIcon name={activeFolder.icon || "folder"} color={activeFolder.color || "var(--muted)"} size={18} /></span>
         <strong>{activeFolder.name}</strong>
         <span class="fcount">{activeFolder.items.length} item{activeFolder.items.length === 1 ? "" : "s"}</span>
-        <div class="folder-actions">
-          <button class="icon-btn" title="Customize folder" onclick={() => (customizeOpen = !customizeOpen)}><Icon name="sliders" size={15} /></button>
-          <button class="icon-btn" title="Rename" onclick={renameFolder}><Icon name="edit" size={15} /></button>
-          <button class="icon-btn" title="Delete folder" onclick={deleteFolder}><Icon name="trash" size={15} /></button>
-        </div>
-
-        {#if customizeOpen}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="backdrop" onclick={() => (customizeOpen = false)}></div>
-          <div class="cust">
-            <div class="cust-sec">Icon</div>
-            <div class="icongrid">
-              {#each FOLDER_ICON_NAMES as n}
-                <button class="ic" class:sel={(activeFolder.icon || "folder") === n} onclick={() => setIcon(n)}>
-                  <FolderIcon name={n} color={activeFolder.color || "var(--muted)"} size={18} />
-                </button>
-              {/each}
-            </div>
-            <div class="cust-sec">Colour</div>
-            <div class="swatches">
-              {#each FOLDER_COLORS as c}
-                <button class="sw" class:sel={activeFolder.color === c} style:background={c} onclick={() => setColor(c)} title={c} aria-label={c}></button>
-              {/each}
-              <button class="sw custom" title="Custom colour" onclick={() => colorInputEl?.click()}><Icon name="plus" size={13} /></button>
-              <input bind:this={colorInputEl} class="hidden-color" type="color" value={activeFolder.color || "#8b9fa4"} onchange={(e) => setColor(e.target.value)} />
-            </div>
-          </div>
-        {/if}
+        <button class="icon-btn edit-folder" title="Edit folder" onclick={openEditFolder}><Icon name="edit" size={15} /></button>
       </div>
     {/if}
 
@@ -414,15 +493,23 @@
       <div class="grid">
         {#each visible as { item, folderId, folderName, folderColor } (item.id)}
           {@const vars = itemVars(item)}
-          {@const tm = typeMeta(item.item_type)}
           {@const pos = selIndex(item.id)}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <article
             class="card"
             class:fav={item.favorite}
             class:sel={pos >= 0}
+            class:compact
+            class:ghost={drag?.kind === "item" && drag.id === item.id}
+            class:drop-before={dropOnId === item.id && !dropAfter}
+            class:drop-after={dropOnId === item.id && dropAfter}
             style:--fcolor={folderColor || "var(--border)"}
-            title="Click to copy"
+            draggable="true"
+            ondragstart={(e) => { drag = { kind: "item", id: item.id, fromFolderId: folderId }; e.dataTransfer.effectAllowed = "move"; }}
+            ondragend={clearDrag}
+            ondragover={(e) => cardDragOver(e, item.id)}
+            ondragleave={() => { if (dropOnId === item.id) dropOnId = null; }}
+            ondrop={() => dropOnCard(item.id, folderId)}
             onclick={(e) => cardClick(e, item)}
           >
             {#if pos >= 0}<span class="selnum">{pos + 1}</span>{/if}
@@ -445,29 +532,29 @@
 
             <div class="name" title={item.name}>{item.name}</div>
 
-            {#if tm || isVirtual}
-              <div class="badges">
-                {#if tm}<span class="badge type">{tm.label}</span>{/if}
-                {#if isVirtual}<span class="badge origin"><span class="odot" style:background={folderColor || "var(--muted)"}></span>{folderName}</span>{/if}
-              </div>
-            {/if}
+            {#if !compact}
+              {#if isVirtual}
+                <div class="badges">
+                  <span class="badge origin"><span class="odot" style:background={folderColor || "var(--muted)"}></span>{folderName}</span>
+                </div>
+              {/if}
 
-            <p class="preview">{item.kind === "sop" ? item.steps[0]?.text || "" : item.text}</p>
+              <p class="preview">{item.kind === "sop" ? item.steps[0]?.text || "" : item.text}</p>
 
-            {#if (item.tags || []).length}
-              <div class="tags">
-                {#each item.tags.slice(0, 3) as t}<span class="chip">{t}</span>{/each}
-                {#if item.tags.length > 3}<span class="chip">+{item.tags.length - 3}</span>{/if}
-              </div>
+              {#if (item.tags || []).length}
+                <div class="tags">
+                  {#each item.tags.slice(0, 3) as t}<span class="chip">{t}</span>{/each}
+                  {#if item.tags.length > 3}<span class="chip">+{item.tags.length - 3}</span>{/if}
+                </div>
+              {/if}
             {/if}
 
             <footer>
-              {#if item.kind === "sop"}
-                <button class="act primary" onclick={() => onFill(item, "steps")}><Icon name="sop" size={13} /> Copy steps</button>
-                <button class="act" onclick={() => copyItem(item)}><Icon name="copy" size={13} /> Copy all</button>
-              {:else}
-                <button class="act" onclick={() => copyItem(item)}><Icon name="copy" size={13} /> Copy</button>
-                {#if vars.length}<button class="act primary" onclick={() => onFill(item)}><Icon name="sparkle" size={13} /> Fill &amp; copy</button>{/if}
+              <button class="act" onclick={() => copyItem(item)}><Icon name="copy" size={13} /> Copy</button>
+              {#if vars.length || item.kind === "sop"}
+                <button class="act primary" onclick={() => onFill(item, item.kind === "sop" ? "steps" : "auto")}>
+                  <Icon name={item.kind === "sop" ? "sop" : "sparkle"} size={13} /> Fill &amp; copy
+                </button>
               {/if}
             </footer>
           </article>
@@ -491,66 +578,123 @@
   </section>
 </div>
 
-<!-- Item editor -->
+<!-- Item editor (simple: name · text · tags) -->
 {#if editorOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="overlay" onclick={(e) => e.target === e.currentTarget && (editorOpen = false)}>
-    <div class="modal wide">
-      <h3>{editingId ? "Edit item" : "New item"}</h3>
-
-      <div class="erow">
-        <label>Name<input class="field" bind:value={fName} placeholder="e.g. Cold outreach" /></label>
-        <label>Folder
-          <select class="field" bind:value={fFolderId}>
-            {#each realFolders as f (f.id)}<option value={f.id}>{f.name}</option>{/each}
-          </select>
-        </label>
+    <div class="modal">
+      <div class="modal-head">
+        <h3>{editingId ? "Edit item" : "New item"}</h3>
+        <button class="icon-btn" title="Close" onclick={() => (editorOpen = false)}><Icon name="close" size={16} /></button>
       </div>
 
-      <div class="erow">
-        <label>Type (optional)
-          <input class="field" list="type-list" bind:value={fType} placeholder="prompt / note / email…" />
-          <datalist id="type-list">
-            <option value="prompt"></option><option value="note"></option><option value="email"></option>
-            <option value="message"></option><option value="snippet"></option><option value="doc"></option>
-          </datalist>
-        </label>
-        <label>Tags (comma separated)<input class="field" bind:value={fTags} placeholder="email, copywriting" /></label>
-      </div>
-
-      <div class="kind">
-        <button class:active={fKind === "template"} onclick={() => (fKind = "template")}>Single text</button>
-        <button class:active={fKind === "sop"} onclick={() => (fKind = "sop")}>SOP (multi-step)</button>
-      </div>
+      <label class="fld">
+        <span class="fld-label">Name</span>
+        <input class="field" bind:value={fName} placeholder="e.g. Cold outreach" />
+      </label>
 
       {#if fKind === "template"}
-        <label>Text<textarea class="field" rows="10" bind:value={fText} placeholder="Hi {'{{firstName}}'}, …"></textarea></label>
+        <label class="fld">
+          <span class="fld-label">Prompt text</span>
+          <textarea class="field" rows="9" bind:value={fText} placeholder="Enter your prompt here…"></textarea>
+          <span class="charcount">{(fText || "").length} characters</span>
+        </label>
       {:else}
-        <div class="steps">
-          {#each fSteps as step, i (i)}
-            <div class="step">
-              <div class="step-head">
-                <input class="field step-title" bind:value={step.title} placeholder={`Step ${i + 1} title`} />
-                <div class="step-ctl">
-                  <button class="icon-btn" title="Up" onclick={() => moveStep(i, -1)} disabled={i === 0}><Icon name="chevronUp" size={14} /></button>
-                  <button class="icon-btn" title="Down" onclick={() => moveStep(i, 1)} disabled={i === fSteps.length - 1}><Icon name="chevronDown" size={14} /></button>
-                  <button class="icon-btn" title="Remove" onclick={() => removeStep(i)} disabled={fSteps.length === 1}><Icon name="close" size={14} /></button>
+        <div class="fld">
+          <span class="fld-label">Steps</span>
+          <div class="steps">
+            {#each fSteps as step, i (i)}
+              <div class="step">
+                <div class="step-head">
+                  <input class="field step-title" bind:value={step.title} placeholder={`Step ${i + 1} title`} />
+                  <div class="step-ctl">
+                    <button class="icon-btn" title="Up" onclick={() => moveStep(i, -1)} disabled={i === 0}><Icon name="chevronUp" size={14} /></button>
+                    <button class="icon-btn" title="Down" onclick={() => moveStep(i, 1)} disabled={i === fSteps.length - 1}><Icon name="chevronDown" size={14} /></button>
+                    <button class="icon-btn" title="Remove" onclick={() => removeStep(i)} disabled={fSteps.length === 1}><Icon name="close" size={14} /></button>
+                  </div>
                 </div>
+                <textarea class="field" rows="4" bind:value={step.text} placeholder="Prompt text for this step…"></textarea>
               </div>
-              <textarea class="field" rows="4" bind:value={step.text} placeholder="Prompt text for this step…"></textarea>
-            </div>
-          {/each}
-          <button class="ghost with-ic" onclick={addStep}><Icon name="plus" size={14} /> Add step</button>
+            {/each}
+            <button class="ghost with-ic" onclick={addStep}><Icon name="plus" size={14} /> Add step</button>
+          </div>
         </div>
       {/if}
 
+      <label class="fld">
+        <span class="fld-label">Tags <span class="dim">(comma separated)</span></span>
+        <input class="field" bind:value={fTags} placeholder="e.g. coding, review, assistant" />
+      </label>
+
       {#if editorVars.length}
-        <p class="hint">{#each editorVars as v}<span class="vchip">{v}</span> {/each}</p>
+        <p class="hint">Variables: {#each editorVars as v}<span class="vchip">{v}</span> {/each}</p>
       {/if}
+
+      <label class="sop-toggle">
+        <input type="checkbox" checked={fKind === "sop"} onchange={(e) => setKind(e.currentTarget.checked)} />
+        <span>Multi-step SOP — copy step by step</span>
+      </label>
 
       <div class="modal-actions">
         <button class="ghost" onclick={() => (editorOpen = false)}>Cancel</button>
         <button class="btn" onclick={saveItem}>Save</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Folder create / edit -->
+{#if folderModalOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="overlay" onclick={(e) => e.target === e.currentTarget && (folderModalOpen = false)}>
+    <div class="modal">
+      <div class="modal-head">
+        <h3>{fmMode === "new" ? "New folder" : "Edit folder"}</h3>
+        <button class="icon-btn" title="Close" onclick={() => (folderModalOpen = false)}><Icon name="close" size={16} /></button>
+      </div>
+
+      <label class="fld">
+        <span class="fld-label">Name</span>
+        <!-- svelte-ignore a11y_autofocus -->
+        <input class="field" bind:value={fmName} placeholder="e.g. Client work" autofocus />
+      </label>
+
+      <div class="fld">
+        <span class="fld-label">Icon</span>
+        <div class="icongrid">
+          {#each FOLDER_ICON_NAMES as n}
+            <button class="ic" class:sel={fmIcon === n} onclick={() => (fmIcon = n)}>
+              <FolderIcon name={n} color={fmColor || "var(--muted)"} size={18} />
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="fld">
+        <span class="fld-label">Colour</span>
+        <div class="swatches">
+          {#each FOLDER_COLORS as c}
+            <button class="sw" class:sel={fmColor === c} style:background={c} onclick={() => (fmColor = c)} aria-label={c}></button>
+          {/each}
+          <button class="sw custom" title="Custom colour" onclick={() => fmColorInput?.click()}><Icon name="plus" size={13} /></button>
+          <input bind:this={fmColorInput} class="hidden-color" type="color" value={fmColor || "#8b9fa4"} onchange={(e) => (fmColor = e.target.value)} />
+        </div>
+      </div>
+
+      <div class="modal-actions folder-actions-row">
+        {#if fmMode === "edit"}
+          {#if fmConfirmDelete}
+            <span class="del-confirm">Delete this folder?</span>
+            <button class="ghost danger" onclick={deleteFolderConfirmed}>Yes, delete</button>
+            <button class="ghost" onclick={() => (fmConfirmDelete = false)}>No</button>
+          {:else}
+            <button class="ghost danger left" onclick={() => (fmConfirmDelete = true)}><Icon name="trash" size={14} /> Delete</button>
+          {/if}
+        {/if}
+        {#if !fmConfirmDelete}
+          <button class="ghost" onclick={() => (folderModalOpen = false)}>Cancel</button>
+          <button class="btn" onclick={saveFolder}>{fmMode === "new" ? "Create" : "Save"}</button>
+        {/if}
       </div>
     </div>
   </div>
@@ -571,9 +715,6 @@
     background: color-mix(in srgb, var(--surface) 55%, transparent);
   }
   .rail-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -581,10 +722,50 @@
     margin-bottom: 10px;
     padding: 0 4px;
   }
-  .icon-btn.sm {
-    width: 24px;
-    height: 24px;
-    font-size: 14px;
+  .virt-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 14px;
+  }
+  .virt {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 9px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: var(--elevated);
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12.5px;
+    min-width: 0;
+  }
+  .virt:hover {
+    color: var(--text);
+  }
+  .virt.active {
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    color: var(--text);
+  }
+  .virt .vl {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .virt .vc {
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .rail-sub {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--faint);
+    padding: 0 4px;
+    margin-bottom: 6px;
   }
   .folders {
     list-style: none;
@@ -594,10 +775,40 @@
     flex-direction: column;
     gap: 2px;
   }
-  .divider {
-    height: 1px;
-    background: var(--border);
-    margin: 8px 6px;
+  .folder-li {
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+  }
+  .folder-li[draggable="true"] {
+    cursor: grab;
+  }
+  .folder-li.drop {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .folder-li.ghost {
+    opacity: 0.4;
+  }
+  .newfolder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    margin-top: 12px;
+    padding: 9px;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    transition: color 0.12s var(--ease), border-color 0.12s var(--ease);
+  }
+  .newfolder:hover {
+    color: var(--text);
+    border-color: var(--accent);
   }
   .folder {
     display: flex;
@@ -685,6 +896,67 @@
     gap: 10px;
     margin-bottom: 12px;
     font-size: 15px;
+  }
+  .edit-folder {
+    margin-left: auto;
+  }
+  /* Item / folder editor extras */
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-head h3 {
+    margin: 0;
+  }
+  .fld {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .fld-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+  .fld-label .dim {
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--faint);
+  }
+  .charcount {
+    align-self: flex-end;
+    font-size: 11px;
+    color: var(--faint);
+  }
+  .sop-toggle {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .folder-actions-row {
+    align-items: center;
+  }
+  .folder-actions-row .left {
+    margin-right: auto;
+  }
+  .del-confirm {
+    margin-right: auto;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .ghost.danger {
+    color: #d98a8a;
+  }
+  .ghost.danger:hover {
+    border-color: #d98a8a;
+    background: color-mix(in srgb, #d98a8a 10%, transparent);
   }
   .backdrop {
     position: fixed;
@@ -815,8 +1087,11 @@
     flex-direction: column;
     gap: 9px;
     box-shadow: var(--shadow-card);
-    cursor: pointer;
+    cursor: grab;
     transition: border-color 0.12s var(--ease), transform 0.08s var(--ease);
+  }
+  .card:active {
+    cursor: grabbing;
   }
   .card:hover {
     border-color: color-mix(in srgb, var(--fcolor) 85%, transparent);
@@ -828,6 +1103,30 @@
   .card.sel {
     border-color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-card);
+  }
+  .card.ghost {
+    opacity: 0.4;
+  }
+  /* Insertion indicator when dragging a card next to another */
+  .card.drop-before::before,
+  .card.drop-after::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--accent);
+  }
+  .card.drop-before::before {
+    left: -8px;
+  }
+  .card.drop-after::after {
+    right: -8px;
+  }
+  .card.compact {
+    gap: 6px;
+    padding: 11px 14px;
   }
   .selnum {
     position: absolute;

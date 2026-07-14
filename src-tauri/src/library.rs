@@ -282,6 +282,21 @@ pub fn reorder_folders(data: &mut LibraryData, ids: &[String]) {
     data.folders = reordered;
 }
 
+/// Reorder items within a folder to match `ids` (any not listed keep their
+/// relative order, appended). Order is stored implicitly as vector position.
+pub fn reorder_items(data: &mut LibraryData, folder_id: &str, ids: &[String]) {
+    if let Some(folder) = data.folders.iter_mut().find(|f| f.id == folder_id) {
+        let mut reordered: Vec<LibItem> = Vec::with_capacity(folder.items.len());
+        for id in ids {
+            if let Some(pos) = folder.items.iter().position(|i| &i.id == id) {
+                reordered.push(folder.items.remove(pos));
+            }
+        }
+        reordered.append(&mut folder.items);
+        folder.items = reordered;
+    }
+}
+
 /// Insert (blank id) or replace (matching id) an item in `folder_id`.
 pub fn upsert_item(data: &mut LibraryData, folder_id: &str, item: LibItem) {
     let item = normalize_item(item);
@@ -412,6 +427,21 @@ mod tests {
         assert_eq!(d.folders[0].name, "C");
         assert_eq!(d.folders[1].name, "A");
         assert_eq!(d.folders[2].name, "B");
+    }
+
+    #[test]
+    fn reorder_items_within_folder() {
+        let mut d = LibraryData { folders: vec![] };
+        create_folder(&mut d, "F");
+        let fid = d.folders[0].id.clone();
+        upsert_item(&mut d, &fid, blank_item("A"));
+        upsert_item(&mut d, &fid, blank_item("B"));
+        upsert_item(&mut d, &fid, blank_item("C"));
+        let ids: Vec<String> = d.folders[0].items.iter().map(|i| i.id.clone()).collect();
+        // Move C to the front, list only C + A (B omitted → appended back).
+        reorder_items(&mut d, &fid, &[ids[2].clone(), ids[0].clone()]);
+        let names: Vec<&str> = d.folders[0].items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["C", "A", "B"]);
     }
 
     #[test]

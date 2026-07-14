@@ -91,6 +91,11 @@ fn lib_toggle_favorite(app: AppHandle, folder_id: String, item_id: String) -> Li
     with_library(&app, |d| library::toggle_favorite(d, &folder_id, &item_id))
 }
 
+#[tauri::command]
+fn lib_reorder_items(app: AppHandle, folder_id: String, ids: Vec<String>) -> LibraryData {
+    with_library(&app, |d| library::reorder_items(d, &folder_id, &ids))
+}
+
 // ─── Profile commands ────────────────────────────────────────────────────────
 
 fn with_profiles<F: FnOnce(&mut ProfilesData)>(app: &AppHandle, f: F) -> ProfilesData {
@@ -281,6 +286,7 @@ pub fn run() {
             lib_delete_item,
             lib_move_item,
             lib_toggle_favorite,
+            lib_reorder_items,
             profiles_get_data,
             profiles_save,
             profiles_delete,

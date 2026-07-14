@@ -1,14 +1,17 @@
 <script>
   import { onMount } from "svelte";
   import { getSettings, setReceiver, webhookStatus, webhookPreview, clipCopy } from "./api.js";
+  import { allLibraryVars } from "./vars.js";
   import Icon from "./Icon.svelte";
 
-  let { settings, flash, onSettings } = $props();
+  let { settings, folders = [], flash, onSettings } = $props();
 
   let uid = 0;
   const nextUid = () => `wh${++uid}`;
 
-  // Editable local copy of the receiver config.
+  // Every variable used across the library — the schema people should send.
+  let libVars = $derived(allLibraryVars(folders));
+
   function clone(r) {
     const src = r || { enabled: false, port: 8787, webhooks: [] };
     return {
@@ -16,6 +19,7 @@
       port: src.port || 8787,
       webhooks: (src.webhooks || []).map((w) => ({
         _uid: nextUid(),
+        _adv: false,
         id: w.id || "",
         name: w.name || "",
         path: w.path || "",
@@ -28,10 +32,9 @@
   }
   let rc = $state(clone(settings.receiver));
   let activePort = $state(null);
-  let tests = $state({}); // _uid -> { text, result, error }
+  let tests = $state({}); // _uid -> { result, error }
 
   onMount(async () => {
-    // Load fresh settings so the view is correct regardless of prop timing.
     const s = await getSettings();
     rc = clone(s.receiver);
     activePort = await webhookStatus();
@@ -40,7 +43,7 @@
   function addWebhook() {
     rc.webhooks = [
       ...rc.webhooks,
-      { _uid: nextUid(), id: "", name: "New webhook", path: "", token: "", name_template: "{{first_name}} {{last_name}}", mappings: [{ from: "first_name", to: "firstName" }], passthrough: true },
+      { _uid: nextUid(), _adv: false, id: "", name: "New webhook", path: "", token: "", name_template: "{{first_name}} {{last_name}}", mappings: [], passthrough: true },
     ];
   }
   function removeWebhook(i) {
@@ -56,7 +59,6 @@
   }
 
   async function saveAll() {
-    // Strip transient _uid before sending; the backend fills ids/tokens/paths.
     const config = {
       enabled: !!rc.enabled,
       port: Number(rc.port) || 8787,
@@ -81,12 +83,9 @@
     if (!wh.path || !wh.token) return "";
     return `http://127.0.0.1:${rc.port}/hook/${wh.path}?token=${wh.token}`;
   }
-  async function copyEndpoint(wh) {
-    const url = endpoint(wh);
-    if (url) {
-      await clipCopy(url);
-      flash("Endpoint URL copied");
-    }
+  async function copyText(text, msg) {
+    await clipCopy(text);
+    flash(msg);
   }
 
   function sampleValue(key) {
@@ -96,42 +95,34 @@
     if (k.includes("email")) return "sam@example.com";
     if (k.includes("phone")) return "+1 555 0100";
     if (k.includes("company")) return "Acme";
-    return "sample";
+    if (k.includes("name")) return "Sam Rivera";
+    return "value";
   }
   function exampleJson(wh) {
-    const keys = new Set();
+    const keys = new Set(libVars);
     for (const m of wh.mappings) if (m.from.trim()) keys.add(m.from.trim());
-    // include name-template placeholders too
     const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
     let m;
     while ((m = re.exec(wh.name_template || "")) !== null) keys.add(m[1].trim());
     if (keys.size === 0) {
       keys.add("first_name");
+      keys.add("last_name");
       keys.add("email");
     }
     const obj = {};
     for (const k of keys) obj[k] = sampleValue(k);
     return JSON.stringify(obj, null, 2);
   }
-  function ensureTest(wh) {
-    if (!tests[wh._uid]) tests = { ...tests, [wh._uid]: { text: exampleJson(wh), result: null, error: "" } };
-    return tests[wh._uid];
-  }
   async function runTest(wh) {
-    const t = ensureTest(wh);
     try {
       const profile = await webhookPreview(
         { id: wh.id || "x", name: wh.name, path: wh.path || "x", token: wh.token || "x", name_template: wh.name_template, mappings: wh.mappings.filter((m) => m.from.trim()), passthrough: !!wh.passthrough },
-        t.text,
+        exampleJson(wh),
       );
-      tests = { ...tests, [wh._uid]: { ...t, result: profile, error: "" } };
+      tests = { ...tests, [wh._uid]: { result: profile, error: "" } };
     } catch (e) {
-      tests = { ...tests, [wh._uid]: { ...t, result: null, error: String(e) } };
+      tests = { ...tests, [wh._uid]: { result: null, error: String(e) } };
     }
-  }
-  function setTestText(wh, text) {
-    const t = ensureTest(wh);
-    tests = { ...tests, [wh._uid]: { ...t, text } };
   }
 </script>
 
@@ -141,14 +132,14 @@
     <button class="btn" onclick={saveAll}>Save &amp; apply</button>
   </div>
   <p class="sub">
-    Turn form submissions (Calendly, Typeform, a CRM…) into profiles automatically. localhost isn't
-    reachable from the internet, so point a tunnel (ngrok / Cloudflare) or a relay (Make / n8n / Zapier)
-    at an endpoint below. No tunnel? Use <strong>Paste JSON</strong> in Profiles.
+    Turn form submissions (Calendly, Typeform, a CRM…) into profiles automatically. Point a tunnel
+    (ngrok / Cloudflare) or a relay (Make / n8n / Zapier) at a webhook's endpoint and send it the
+    example payload below. No tunnel? Use <strong>Paste JSON</strong> in Profiles.
   </p>
 
   <div class="panel receiver">
     <label class="toggle">
-      <input type="checkbox" bind:checked={rc.enabled} />
+      <input class="switch" type="checkbox" bind:checked={rc.enabled} />
       <span>Enable local receiver</span>
     </label>
     <label class="portf">Port<input class="field" type="number" min="1024" max="65535" bind:value={rc.port} /></label>
@@ -166,49 +157,30 @@
         <button class="icon-btn" title="Delete webhook" onclick={() => removeWebhook(i)}><Icon name="trash" size={15} /></button>
       </div>
 
-      <div class="two">
-        <label>Path (URL slug)<input class="field" bind:value={wh.path} placeholder="calendly" /></label>
-        <label>Profile name template<input class="field" bind:value={wh.name_template} placeholder="{'{{first_name}} {{last_name}}'}" /></label>
-      </div>
-
       {#if endpoint(wh)}
-        <div class="endpoint">
+        <div class="row">
+          <span class="rlabel">Endpoint</span>
           <code class="url">{endpoint(wh)}</code>
-          <button class="ghost" onclick={() => copyEndpoint(wh)}><Icon name="copy" size={14} /> Copy</button>
+          <button class="ghost sm" onclick={() => copyText(endpoint(wh), "Endpoint URL copied")}><Icon name="copy" size={14} /> Copy</button>
         </div>
       {:else}
         <p class="tiny">Save to generate this webhook's secret endpoint URL.</p>
       {/if}
 
-      <div class="maps">
-        <span class="maps-head">Field mapping — incoming JSON key → <code>{"{{variable}}"}</code></span>
-        {#each wh.mappings as m, mi (mi)}
-          <div class="map-row">
-            <input class="field" bind:value={m.from} placeholder="first_name" />
-            <Icon name="arrowRight" size={15} />
-            <input class="field" bind:value={m.to} placeholder="firstName" />
-            <button class="icon-btn" title="Remove" onclick={() => removeMapping(wh, mi)}><Icon name="close" size={14} /></button>
+      <div class="example">
+        <div class="ex-head">
+          <span class="rlabel">Example payload — send these fields</span>
+          <div class="ex-actions">
+            <button class="ghost sm" onclick={() => copyText(exampleJson(wh), "Example payload copied")}><Icon name="copy" size={14} /> Copy</button>
+            <button class="ghost sm" onclick={() => runTest(wh)}><Icon name="check" size={14} /> Test</button>
           </div>
-        {/each}
-        <button class="ghost sm" onclick={() => addMapping(wh)}><Icon name="plus" size={14} /> Add mapping</button>
-      </div>
-
-      <label class="toggle">
-        <input type="checkbox" bind:checked={wh.passthrough} />
-        <span>Pass unmapped fields through as variables of the same name</span>
-      </label>
-
-      <div class="test">
-        <div class="test-head">
-          <span class="maps-head">Example payload — test the mapping</span>
-          <button class="ghost sm" onclick={() => runTest(wh)}><Icon name="check" size={14} /> Test</button>
         </div>
-        <textarea class="field mono" rows="4" value={t ? t.text : exampleJson(wh)} oninput={(e) => setTestText(wh, e.target.value)}></textarea>
+        <pre class="code">{exampleJson(wh)}</pre>
         {#if t?.error}
           <p class="err">{t.error}</p>
         {:else if t?.result}
           <div class="result">
-            <div class="rname">→ profile “{t.result.name}”</div>
+            <div class="rname">→ creates profile “{t.result.name}”</div>
             <div class="rvals">
               {#each Object.entries(t.result.values) as [k, v]}
                 <span class="rv"><span class="vchip">{k}</span> {v}</span>
@@ -217,6 +189,35 @@
           </div>
         {/if}
       </div>
+
+      <button class="adv-toggle" onclick={() => (wh._adv = !wh._adv)}>
+        <Icon name={wh._adv ? "chevronDown" : "chevronRight"} size={14} /> Advanced (custom path, name &amp; field mapping)
+      </button>
+
+      {#if wh._adv}
+        <div class="adv">
+          <div class="two">
+            <label>Path (URL slug)<input class="field" bind:value={wh.path} placeholder="auto from name" /></label>
+            <label>Profile name template<input class="field" bind:value={wh.name_template} placeholder="{'{{first_name}} {{last_name}}'}" /></label>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" bind:checked={wh.passthrough} />
+            <span>Pass every field through as a variable of the same name (recommended)</span>
+          </label>
+          <div class="maps">
+            <span class="rlabel">Rename fields (optional) — incoming key → <code>{"{{variable}}"}</code></span>
+            {#each wh.mappings as m, mi (mi)}
+              <div class="map-row">
+                <input class="field" bind:value={m.from} placeholder="first_name" />
+                <Icon name="arrowRight" size={15} />
+                <input class="field" bind:value={m.to} placeholder="firstName" />
+                <button class="icon-btn" title="Remove" onclick={() => removeMapping(wh, mi)}><Icon name="close" size={14} /></button>
+              </div>
+            {/each}
+            <button class="ghost sm" onclick={() => addMapping(wh)}><Icon name="plus" size={14} /> Add rename</button>
+          </div>
+        </div>
+      {/if}
     </div>
   {/each}
 
@@ -268,7 +269,7 @@
   .toggle {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     font-size: 13px;
     cursor: pointer;
   }
@@ -308,23 +309,15 @@
   .wname {
     font-weight: 600;
   }
-  .two {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  .two label,
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .endpoint {
+  .row {
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .rlabel {
+    font-size: 12px;
+    color: var(--muted);
+    flex-shrink: 0;
   }
   .url {
     font-family: var(--font-mono);
@@ -339,48 +332,46 @@
     white-space: nowrap;
     color: var(--text);
   }
-  .tiny,
-  .ttiny {
+  .tiny {
     font-size: 12px;
     color: var(--faint);
     margin: 0;
   }
-  .maps {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-  .maps-head {
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .map-row {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr auto;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-  }
-  .ghost.sm {
-    padding: 6px 10px;
-    font-size: 12px;
-    align-self: flex-start;
-  }
-  .test {
+  .example {
     display: flex;
     flex-direction: column;
     gap: 8px;
     border-top: 1px solid var(--border);
     padding-top: 12px;
   }
-  .test-head {
+  .ex-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
   }
-  .mono {
+  .ex-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .code {
+    margin: 0;
     font-family: var(--font-mono);
     font-size: 12.5px;
+    line-height: 1.5;
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+    padding: 11px 12px;
+    max-height: 220px;
+    overflow: auto;
+    white-space: pre;
+    color: var(--text);
+  }
+  .ghost.sm {
+    padding: 6px 10px;
+    font-size: 12px;
   }
   .err {
     color: #d98a8a;
@@ -407,7 +398,53 @@
   }
   .rv {
     font-size: 12.5px;
+  }
+  .adv-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12.5px;
+    padding: 2px 0;
+    align-self: flex-start;
+  }
+  .adv-toggle:hover {
     color: var(--text);
+  }
+  .adv {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+  .two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .two label,
+  .adv > label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .maps {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .map-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
   }
   .add {
     width: 100%;

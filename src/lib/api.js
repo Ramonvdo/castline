@@ -19,6 +19,7 @@ export const libMoveItem = (fromFolderId, toFolderId, itemId) =>
   invoke("lib_move_item", { fromFolderId, toFolderId, itemId });
 export const libToggleFavorite = (folderId, itemId) =>
   invoke("lib_toggle_favorite", { folderId, itemId });
+export const libReorderItems = (folderId, ids) => invoke("lib_reorder_items", { folderId, ids });
 
 // ── Profiles (separate store) ──
 export const getProfiles = () => invoke("profiles_get_data");
