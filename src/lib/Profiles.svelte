@@ -1,12 +1,12 @@
 <script>
   import { allLibraryVars } from "./vars.js";
-  import { profilesSave, profilesDelete, profilesSetLayout, profileFromJson } from "./api.js";
+  import { profilesSave, profilesDelete, profilesSetLayout, profileFromJson, connectorSend } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props — `layout` is the GLOBAL variable grouping (splitters + ordering),
   // shared by every profile. Presentation-only: never affects `values`, so
   // webhook / n8n / Make mappings keyed on variable names keep working.
-  let { profiles = [], layout = [], folders = [], flash, onData } = $props();
+  let { profiles = [], layout = [], folders = [], connectors = [], flash, onData } = $props();
 
   let editingId = $state(null); // null = list, "" = new, <id> = editing
   let name = $state("");
@@ -145,6 +145,84 @@
       flash(String(e));
     }
   }
+
+  // ── Outbound connectors: enrich a profile / create from a connector ──
+  let showConnector = $state(false);
+  let connId = $state("");
+  let connSeed = $state("");
+  let connBusy = $state(false);
+  let enrichForId = $state(null);
+  let enrichBusy = $state(false);
+
+  function parseObj(body) {
+    try {
+      const o = JSON.parse(body);
+      return o && typeof o === "object" && !Array.isArray(o) ? o : null;
+    } catch {
+      return null;
+    }
+  }
+  function strval(v) {
+    return typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+  }
+
+  function openConnectorPanel() {
+    showConnector = !showConnector;
+    if (showConnector && !connId && connectors.length) connId = connectors[0].id;
+  }
+  async function newFromConnector() {
+    const c = connectors.find((x) => x.id === connId) || connectors[0];
+    if (!c) {
+      flash("Add a connector first (Connectors tab)");
+      return;
+    }
+    let seedObj = {};
+    if (connSeed.trim()) {
+      try {
+        seedObj = JSON.parse(connSeed);
+      } catch {
+        flash("Seed must be valid JSON, e.g. { \"email\": \"sam@x.com\" }");
+        return;
+      }
+    }
+    connBusy = true;
+    try {
+      const res = await connectorSend(c.url, JSON.stringify(seedObj));
+      const obj = parseObj(res.body);
+      if (!obj) {
+        flash(`Connector returned no JSON to build a profile (status ${res.status})`);
+      } else {
+        const data = await profileFromJson(JSON.stringify(obj));
+        onData(data);
+        showConnector = false;
+        connSeed = "";
+        flash("Profile created from connector");
+      }
+    } catch (e) {
+      flash(String(e));
+    }
+    connBusy = false;
+  }
+  async function enrich(p, c) {
+    enrichForId = null;
+    enrichBusy = true;
+    try {
+      const res = await connectorSend(c.url, JSON.stringify(p.values));
+      const obj = parseObj(res.body);
+      if (!obj) {
+        flash(`Connector returned no JSON (status ${res.status})`);
+      } else {
+        const merged = { ...p.values };
+        for (const [k, v] of Object.entries(obj)) merged[k] = strval(v);
+        const data = await profilesSave({ id: p.id, name: p.name, values: merged, source: p.source || "manual" });
+        onData(data);
+        flash(`Enriched “${p.name}” (+${Object.keys(obj).length} fields)`);
+      }
+    } catch (e) {
+      flash(String(e));
+    }
+    enrichBusy = false;
+  }
 </script>
 
 <div class="view">
@@ -152,6 +230,7 @@
     <div class="view-head">
       <h2>Profiles</h2>
       <div class="head-actions">
+        {#if connectors.length}<button class="ghost" onclick={openConnectorPanel}>New from connector</button>{/if}
         <button class="ghost" onclick={() => (showPaste = !showPaste)}>Paste JSON…</button>
         <button class="btn" onclick={newProfile}><Icon name="plus" size={14} /> New profile</button>
       </div>
@@ -170,15 +249,47 @@
       </div>
     {/if}
 
+    {#if showConnector}
+      <div class="panel paste">
+        <label>Connector
+          <select class="field" bind:value={connId}>
+            {#each connectors as c (c.id)}<option value={c.id}>{c.name || c.url}</option>{/each}
+          </select>
+        </label>
+        <label>Seed to send (optional JSON)
+          <textarea class="field" rows="3" placeholder={'{ "email": "sam@example.com" }'} bind:value={connSeed}></textarea>
+        </label>
+        <p class="tiny">Castline POSTs this to the connector and builds a profile from the JSON it returns.</p>
+        <div class="row-end">
+          <button class="ghost" onclick={() => (showConnector = false)}>Cancel</button>
+          <button class="btn" onclick={newFromConnector} disabled={connBusy}>{connBusy ? "Running…" : "Run"}</button>
+        </div>
+      </div>
+    {/if}
+
     {#if profiles.length === 0}
       <p class="empty">No profiles yet.</p>
     {:else}
       <ul class="plist">
         {#each profiles as p (p.id)}
-          <li>
+          <li class="prow">
             <span class="pname">{p.name}</span>
             {#if p.source && p.source !== "manual"}<span class="srcbadge">{p.source}</span>{/if}
             <span class="muted">{Object.keys(p.values).length} value(s)</span>
+            {#if connectors.length}
+              <div class="enrich-wrap">
+                <button class="link" disabled={enrichBusy} onclick={() => (enrichForId = enrichForId === p.id ? null : p.id)}>Enrich ▾</button>
+                {#if enrichForId === p.id}
+                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                  <div class="backdrop" onclick={() => (enrichForId = null)}></div>
+                  <div class="enrich-menu">
+                    {#each connectors as c (c.id)}
+                      <button class="emi" onclick={() => enrich(p, c)}>{c.name || c.url}</button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
             <button class="link" onclick={() => editProfile(p)}>Edit</button>
             <button class="link danger" onclick={() => remove(p)}>Delete</button>
           </li>
@@ -303,6 +414,53 @@
     border-radius: var(--radius-sm);
     background: var(--surface);
     padding: 11px 13px;
+  }
+  .prow {
+    position: relative;
+  }
+  .enrich-wrap {
+    position: relative;
+  }
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+  }
+  .enrich-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 41;
+    min-width: 180px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .emi {
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 7px 9px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .emi:hover {
+    background: var(--elevated);
+  }
+  .tiny {
+    font-size: 12px;
+    color: var(--faint);
+    margin: 0;
   }
   .pname {
     font-weight: 600;

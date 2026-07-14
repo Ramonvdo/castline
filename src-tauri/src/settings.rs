@@ -1,7 +1,6 @@
-//! Persistent app settings (`<config_dir>/Castline/settings.json`): the incoming
-//! webhook receiver (a shared local HTTP server) and the list of named webhooks
-//! it routes. Each webhook has its own path, secret token and field mapping, so
-//! one receiver can accept payloads from several sources (Calendly, Typeform, …).
+//! Persistent app settings (`<config_dir>/Castline/settings.json`): the list of
+//! outbound **connectors** — Make / n8n (or any) webhook URLs Castline POSTs to
+//! and reads a response from. No inbound server, so no tunnel or open port.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -10,50 +9,14 @@ use std::sync::Mutex;
 
 use crate::library::gen_id;
 
-/// One rule: copy incoming JSON key `from` into profile variable `to`.
+/// An outbound connector: a pasted webhook URL Castline POSTs profile data to.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FieldMap {
-    pub from: String,
-    pub to: String,
-}
-
-/// A named webhook endpoint served at `/hook/<path>`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Webhook {
+pub struct Connector {
     pub id: String,
     #[serde(default)]
     pub name: String,
-    /// URL slug: the endpoint is `/hook/<path>`.
     #[serde(default)]
-    pub path: String,
-    /// Secret required as `?token=…` (generated when the webhook is created).
-    #[serde(default)]
-    pub token: String,
-    /// Template for the new profile's name, using `{{incoming_key}}` placeholders.
-    #[serde(default = "default_name_template")]
-    pub name_template: String,
-    #[serde(default)]
-    pub mappings: Vec<FieldMap>,
-    /// When true, unmapped incoming keys become variables of the same name.
-    #[serde(default = "default_true")]
-    pub passthrough: bool,
-}
-
-/// The shared local receiver + the webhooks it routes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReceiverConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_port")]
-    pub port: u16,
-    #[serde(default)]
-    pub webhooks: Vec<Webhook>,
-}
-
-impl Default for ReceiverConfig {
-    fn default() -> Self {
-        Self { enabled: false, port: default_port(), webhooks: Vec::new() }
-    }
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,78 +25,25 @@ pub struct AppSettings {
     #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default)]
-    pub receiver: ReceiverConfig,
+    pub connectors: Vec<Connector>,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        Self { theme: default_theme(), receiver: ReceiverConfig::default() }
+        Self { theme: default_theme(), connectors: Vec::new() }
     }
 }
 
-fn default_port() -> u16 {
-    8787
-}
-fn default_name_template() -> String {
-    "{{first_name}} {{last_name}}".into()
-}
 fn default_theme() -> String {
     "dark".into()
 }
-fn default_true() -> bool {
-    true
-}
 
-/// A url-safe slug from a webhook name (fallback when the user leaves path blank).
-pub fn slugify(s: &str) -> String {
-    let mut out = String::new();
-    let mut prev_dash = false;
-    for ch in s.trim().to_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            prev_dash = false;
-        } else if !prev_dash && !out.is_empty() {
-            out.push('-');
-            prev_dash = true;
+/// Give every connector a stable id (called whenever connectors are saved).
+pub fn normalize_connectors(connectors: &mut [Connector]) {
+    for c in connectors.iter_mut() {
+        if c.id.trim().is_empty() {
+            c.id = gen_id();
         }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    out
-}
-
-/// Fill in ids, tokens and unique paths for any webhook missing them. Called
-/// whenever the receiver config is saved so every webhook is addressable + secret.
-pub fn normalize_receiver(cfg: &mut ReceiverConfig) {
-    if cfg.port == 0 {
-        cfg.port = default_port();
-    }
-    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for wh in &mut cfg.webhooks {
-        if wh.id.trim().is_empty() {
-            wh.id = gen_id();
-        }
-        if wh.token.trim().is_empty() {
-            wh.token = format!("{}{}", gen_id(), gen_id());
-        }
-        if wh.path.trim().is_empty() {
-            wh.path = slugify(&wh.name);
-            if wh.path.is_empty() {
-                wh.path = wh.id.clone();
-            }
-        } else {
-            wh.path = slugify(&wh.path);
-        }
-        // Ensure uniqueness of the routing path.
-        let mut candidate = wh.path.clone();
-        let mut n = 2;
-        while used.contains(&candidate) {
-            candidate = format!("{}-{}", wh.path, n);
-            n += 1;
-        }
-        wh.path = candidate.clone();
-        used.insert(candidate);
     }
 }
 
@@ -192,26 +102,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slugify_makes_url_safe_paths() {
-        assert_eq!(slugify("Calendly Booking!"), "calendly-booking");
-        assert_eq!(slugify("  Type form  "), "type-form");
-        assert_eq!(slugify("***"), "");
+    fn normalize_fills_ids() {
+        let mut cs = vec![
+            Connector { id: String::new(), name: "Enrich".into(), url: "https://hook.make.com/x".into() },
+            Connector { id: "keep".into(), name: "B".into(), url: "https://n8n/y".into() },
+        ];
+        normalize_connectors(&mut cs);
+        assert!(!cs[0].id.is_empty());
+        assert_eq!(cs[1].id, "keep");
     }
 
     #[test]
-    fn normalize_fills_ids_tokens_and_unique_paths() {
-        let mut cfg = ReceiverConfig {
-            enabled: true,
-            port: 0,
-            webhooks: vec![
-                Webhook { id: String::new(), name: "Calendly".into(), path: String::new(), token: String::new(), name_template: default_name_template(), mappings: vec![], passthrough: true },
-                Webhook { id: String::new(), name: "Calendly".into(), path: String::new(), token: String::new(), name_template: default_name_template(), mappings: vec![], passthrough: true },
-            ],
-        };
-        normalize_receiver(&mut cfg);
-        assert_eq!(cfg.port, 8787);
-        assert!(cfg.webhooks.iter().all(|w| !w.id.is_empty() && !w.token.is_empty()));
-        // Duplicate names must not collide on path.
-        assert_ne!(cfg.webhooks[0].path, cfg.webhooks[1].path);
+    fn old_settings_with_receiver_still_loads() {
+        // A settings.json from the inbound-receiver era must still deserialize;
+        // the unknown `receiver` field is ignored and connectors default to [].
+        let json = r#"{ "theme": "dark", "receiver": { "enabled": true, "port": 8787, "webhooks": [] } }"#;
+        let s: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.theme, "dark");
+        assert!(s.connectors.is_empty());
     }
 }

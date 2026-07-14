@@ -25,8 +25,9 @@ serde_json = "1"
 chrono = "0.4"
 dirs = "6"
 
-# Local webhook receiver: a tiny, synchronous HTTP server on a background thread.
-tiny_http = "0.12"
+# Outbound connectors: a small blocking HTTPS client to POST to a Make/n8n
+# webhook and read the response (rustls TLS via ureq's default features).
+ureq = "2"
 
 [dev-dependencies]
 tempfile = "3"

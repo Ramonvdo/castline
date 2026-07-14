@@ -39,8 +39,8 @@ It's **local-first** (plain JSON files on your machine — no account, no cloud,
   view and Favourites keep large libraries scannable.
 - **Import / export** — your library and profiles are portable JSON. Back them up, share them, open the
   folder, or edit by hand.
-- **Incoming webhooks → auto profiles** — turn a form submission (e.g. a Calendly booking) into a
-  ready-to-use profile automatically (see below).
+- **Connectors (Make / n8n)** — paste a webhook URL and Castline POSTs a profile's fields to it, then
+  builds/enriches the profile from the JSON your scenario returns. No tunnel, no open port (see below).
 
 ## Install
 
@@ -69,34 +69,30 @@ Two portable JSON files (plus settings) in your OS app-data folder — reachable
 | File | Contents |
 | --- | --- |
 | `library.json` | folders, prompts, templates, notes, SOPs |
-| `profiles.json` | `{{variable}}` value sets (incl. webhook-created ones) |
-| `settings.json` | accent colour + webhook configuration |
+| `profiles.json` | `{{variable}}` value sets (+ global variable grouping) |
+| `settings.json` | outbound connector URLs |
 
 - **Windows:** `%APPDATA%\Castline\`
 - **macOS:** `~/Library/Application Support/Castline/`
 
-## Incoming webhooks → auto-create profiles
+## Connectors → enrich & create profiles (Make / n8n)
 
-Castline can run a small **local HTTP receiver** that turns an inbound JSON payload into a profile,
-using a field mapping you define in **Settings → Incoming webhook**.
+Rather than run a server you'd have to expose to the internet, Castline calls **out** to a webhook URL
+you paste from Make / n8n (or any HTTP endpoint). It POSTs a profile's fields and reads the JSON your
+scenario returns — a single request/response round-trip on the connection Castline opens, so there's
+**no tunnel and no open port**.
 
-Because a desktop app on `localhost` isn't reachable from the public internet, point one of these at
-the endpoint:
+1. In Make add a **Custom webhook** trigger (n8n: a **Webhook** node) and copy its URL.
+2. Add your lookup/enrichment steps, then a **Webhook response** module (n8n: **Respond to Webhook**)
+   that returns JSON.
+3. In Castline → **Connectors**, paste the URL. **Test** shows exactly which fields Castline sends
+   (all your `{{variables}}`) so you can map them in Make/n8n, and shows what comes back.
+4. Use it from **Profiles**: **Enrich** a profile (send its fields, merge the returned ones) or **New
+   from connector** (send a seed like an email, build a profile from the response).
 
-- a tunnel — **ngrok** or **Cloudflare Tunnel**
-- a relay/automation — **Make**, **n8n** or **Zapier** forwarding the payload
-
-```
-POST http://127.0.0.1:8787/hook?token=<your-secret>
-Content-Type: application/json
-
-{ "first_name": "Sam", "last_name": "Rivera", "email": "sam@example.com" }
-```
-
-→ creates a profile **"Sam Rivera"** with `firstName`, `lastName`, `email` ready to fill your templates.
-
-The receiver binds to `127.0.0.1` only, requires the secret `token`, and runs only while the app is
-open. No tunnel? The same field mapping powers **Paste JSON…** in the Profiles panel.
+Response keys become variables of the same name — all mapping lives in your Make/n8n scenario, so
+changing fields never means reconfiguring Castline. No integration? **Paste JSON…** in Profiles still
+works.
 
 ## Cutting a release
 
@@ -123,14 +119,14 @@ castline/
   src-tauri/src/
     library.rs         folders + items store (library.json)
     profiles.rs        variable profiles store (profiles.json)
-    settings.rs        app settings + webhook config
-    webhook.rs         local HTTP receiver + JSON→profile mapping
+    settings.rs        app settings + connector list
+    connectors.rs      outbound POST (ureq) + JSON→profile passthrough
     lib.rs             Tauri commands + app setup
 ```
 
 ## Tech stack
 
-Tauri v2 · Rust · Svelte 5 + Vite · plain JSON storage · `tiny_http` for the webhook receiver.
+Tauri v2 · Rust · Svelte 5 + Vite · plain JSON storage · `ureq` for outbound connectors.
 
 ## License
 

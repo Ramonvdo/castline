@@ -3,7 +3,7 @@
 mod library;
 mod profiles;
 mod settings;
-mod webhook;
+mod connectors;
 
 use std::path::Path;
 
@@ -12,8 +12,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use library::{LibraryData, LibraryState};
 use profiles::{ProfilesData, ProfilesState};
-use settings::{AppSettings, ReceiverConfig, SettingsState};
-use webhook::WebhookController;
+use settings::{AppSettings, Connector, SettingsState};
 
 // ─── Library commands ────────────────────────────────────────────────────────
 // Each mutation locks the managed state, applies a pure helper from `library`,
@@ -136,19 +135,16 @@ fn profiles_set_layout(app: AppHandle, layout: Vec<profiles::LayoutEntry>) -> Pr
 fn profile_from_json(app: AppHandle, json_text: String) -> Result<ProfilesData, String> {
     let payload: serde_json::Value =
         serde_json::from_str(&json_text).map_err(|e| format!("Invalid JSON: {e}"))?;
-    let profile = webhook::build_profile_passthrough(&payload)
+    let profile = connectors::build_profile_passthrough(&payload)
         .ok_or_else(|| "The JSON must be an object, e.g. { \"first_name\": \"Sam\" }".to_string())?;
     Ok(with_profiles(&app, |d| profiles::upsert_profile(d, profile)))
 }
 
-/// Preview (without saving) the profile a webhook would build from a sample
-/// payload — powers the "Test" button in the Webhooks view.
+/// POST `body` (JSON) to an outbound connector URL and return its response
+/// status + body (the Make/n8n "Webhook response"). The frontend merges/creates.
 #[tauri::command]
-fn webhook_preview(webhook: settings::Webhook, json_text: String) -> Result<profiles::Profile, String> {
-    let payload: serde_json::Value =
-        serde_json::from_str(&json_text).map_err(|e| format!("Invalid JSON: {e}"))?;
-    webhook::build_profile_from_json(&webhook, &payload)
-        .ok_or_else(|| "The JSON must be an object, e.g. { \"first_name\": \"Sam\" }".to_string())
+fn connector_send(url: String, body: String) -> Result<connectors::ConnectorResult, String> {
+    connectors::connector_send(&url, &body)
 }
 
 // ─── Clipboard ───────────────────────────────────────────────────────────────
@@ -159,34 +155,25 @@ fn clip_copy(app: AppHandle, text: String) -> bool {
     app.clipboard().write_text(text).is_ok()
 }
 
-// ─── Settings / appearance / webhook ─────────────────────────────────────────
+// ─── Settings / connectors ───────────────────────────────────────────────────
 
 #[tauri::command]
 fn get_settings(app: AppHandle) -> AppSettings {
     app.state::<SettingsState>().snapshot()
 }
 
-/// Persist the receiver config (enabled + port + list of webhooks), filling in
-/// ids/tokens/unique paths, then (re)start the listener accordingly.
+/// Persist the list of outbound connectors (giving each a stable id).
 #[tauri::command]
-fn set_receiver(app: AppHandle, config: ReceiverConfig) -> AppSettings {
+fn set_connectors(app: AppHandle, connectors: Vec<Connector>) -> AppSettings {
     let state = app.state::<SettingsState>();
     {
         let mut s = state.data.lock().unwrap();
-        let mut cfg = config;
-        settings::normalize_receiver(&mut cfg);
-        s.receiver = cfg;
+        let mut cs = connectors;
+        settings::normalize_connectors(&mut cs);
+        s.connectors = cs;
     }
     state.save();
-    let r = state.snapshot().receiver;
-    app.state::<WebhookController>().apply(&app, r.enabled, r.port);
     state.snapshot()
-}
-
-/// The port the receiver is actually bound to right now (null when not running).
-#[tauri::command]
-fn webhook_status(app: AppHandle) -> Option<u16> {
-    app.state::<WebhookController>().active_port()
 }
 
 // ─── Import / export / reveal ────────────────────────────────────────────────
@@ -273,7 +260,6 @@ pub fn run() {
         .manage(LibraryState::load(data_dir.join("library.json")))
         .manage(ProfilesState::load(data_dir.join("profiles.json")))
         .manage(SettingsState::load())
-        .manage(WebhookController::default())
         .invoke_handler(tauri::generate_handler![
             lib_get_data,
             lib_create_folder,
@@ -292,11 +278,10 @@ pub fn run() {
             profiles_delete,
             profiles_set_layout,
             profile_from_json,
-            webhook_preview,
+            connector_send,
             clip_copy,
             get_settings,
-            set_receiver,
-            webhook_status,
+            set_connectors,
             get_data_dir,
             reveal_data_dir,
             export_library_to,
@@ -305,13 +290,6 @@ pub fn run() {
             import_profiles_from,
             save_text_file,
         ])
-        .setup(|app| {
-            // Start the webhook receiver if it was enabled last session.
-            let handle = app.handle().clone();
-            let r = app.state::<SettingsState>().snapshot().receiver;
-            app.state::<WebhookController>().apply(&handle, r.enabled, r.port);
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running Castline");
 }

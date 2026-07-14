@@ -3,7 +3,7 @@
   import Library from "./lib/Library.svelte";
   import QuickOpen from "./lib/QuickOpen.svelte";
   import Profiles from "./lib/Profiles.svelte";
-  import Webhooks from "./lib/Webhooks.svelte";
+  import Connectors from "./lib/Connectors.svelte";
   import Settings from "./lib/Settings.svelte";
   import FillCopy from "./lib/FillCopy.svelte";
   import Icon from "./lib/Icon.svelte";
@@ -17,9 +17,9 @@
 
   let library = $state({ folders: [] });
   let profiles = $state({ profiles: [], layout: [] });
-  let settings = $state({ theme: "dark", receiver: { enabled: false, port: 8787, webhooks: [] } });
+  let settings = $state({ theme: "dark", connectors: [] });
 
-  let view = $state("library"); // library | profiles | webhooks | settings
+  let view = $state("library"); // library | profiles | connectors | settings
   let quickOpen = $state(false);
   let fillItem = $state(null);
   let fillMode = $state("auto"); // auto | steps
@@ -82,7 +82,7 @@
   const NAV = [
     { id: "library", label: "Library", icon: "layers" },
     { id: "profiles", label: "Profiles", icon: "user" },
-    { id: "webhooks", label: "Webhooks", icon: "plug" },
+    { id: "connectors", label: "Connectors", icon: "plug" },
     { id: "settings", label: "Settings", icon: "sliders" },
   ];
 </script>
@@ -148,9 +148,9 @@
     {#if view === "library"}
       <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} {flash} onFill={openFill} />
     {:else if view === "profiles"}
-      <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} {flash} onData={(d) => (profiles = d)} />
-    {:else if view === "webhooks"}
-      <Webhooks {settings} folders={library.folders} {flash} onSettings={(s) => (settings = s)} />
+      <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} connectors={settings.connectors || []} {flash} onData={(d) => (profiles = d)} />
+    {:else if view === "connectors"}
+      <Connectors connectors={settings.connectors || []} folders={library.folders} {flash} onSettings={(s) => (settings = s)} />
     {:else if view === "settings"}
       <Settings {flash} onLibraryData={(d) => (library = d)} onProfilesData={(d) => (profiles = d)} />
     {/if}

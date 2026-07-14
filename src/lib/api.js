@@ -31,11 +31,11 @@ export const profileFromJson = (jsonText) => invoke("profile_from_json", { jsonT
 // ── Clipboard ──
 export const clipCopy = (text) => invoke("clip_copy", { text });
 
-// ── Settings / webhooks ──
+// ── Settings / outbound connectors ──
 export const getSettings = () => invoke("get_settings");
-export const setReceiver = (config) => invoke("set_receiver", { config });
-export const webhookStatus = () => invoke("webhook_status");
-export const webhookPreview = (webhook, jsonText) => invoke("webhook_preview", { webhook, jsonText });
+export const setConnectors = (connectors) => invoke("set_connectors", { connectors });
+// POST bodyJson to a Make/n8n webhook URL; resolves to { status, body }.
+export const connectorSend = (url, bodyJson) => invoke("connector_send", { url, body: bodyJson });
 
 // ── Import / export / reveal ──
 export const getDataDir = () => invoke("get_data_dir");
