@@ -232,11 +232,15 @@
     selected = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
   }
   function cardClick(e, item) {
-    // Ctrl/Cmd + click on the card body (not on an action button) toggles select.
-    if (!(e.ctrlKey || e.metaKey)) return;
+    // Buttons handle their own clicks.
     if (e.target.closest && e.target.closest("button")) return;
-    e.preventDefault();
-    toggleSelect(item.id);
+    // Ctrl/Cmd + click toggles multi-select; a plain click copies the item.
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      toggleSelect(item.id);
+      return;
+    }
+    copyItem(item);
   }
   function clearSelection() {
     selected = [];
@@ -408,37 +412,45 @@
       <p class="empty">No items{search || selectedTags.length ? " match" : " yet"}.</p>
     {:else}
       <div class="grid">
-        {#each visible as { item, folderId, folderName, folderIcon } (item.id)}
+        {#each visible as { item, folderId, folderName, folderColor } (item.id)}
           {@const vars = itemVars(item)}
           {@const tm = typeMeta(item.item_type)}
           {@const pos = selIndex(item.id)}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <article class="card" class:fav={item.favorite} class:sel={pos >= 0} onclick={(e) => cardClick(e, item)}>
+          <article
+            class="card"
+            class:fav={item.favorite}
+            class:sel={pos >= 0}
+            style:--fcolor={folderColor || "var(--border)"}
+            title="Click to copy"
+            onclick={(e) => cardClick(e, item)}
+          >
             {#if pos >= 0}<span class="selnum">{pos + 1}</span>{/if}
-            <header>
-              <span class="name" title={item.name}>{item.name}</span>
-              <div class="actions">
-                <button class="star" class:on={item.favorite} title={item.favorite ? "Unpin" : "Pin"} onclick={() => toggleFav(folderId, item)}>
-                  <Icon name="star" size={15} fill={item.favorite} />
-                </button>
-                <button class="icon-btn xs" title="Edit" onclick={() => openEditItem(folderId, item)}><Icon name="edit" size={14} /></button>
-                <button class="icon-btn xs" title="Delete" onclick={() => deleteItem(folderId, item)}><Icon name="trash" size={14} /></button>
-              </div>
-            </header>
 
-            <div class="badges">
-              <span class="badge {item.kind}">
-                <Icon name={item.kind === "sop" ? "sop" : "template"} size={11} />
-                {item.kind === "sop" ? `SOP · ${item.steps.length}` : "Template"}
-              </span>
-              {#if tm}<span class="badge type">{tm.label}</span>{/if}
-              {#if isVirtual}
-                <span class="badge origin">
-                  {#if folderIcon}{folderIcon}{:else}<Icon name="folder" size={11} />{/if}
-                  {folderName}
-                </span>
-              {/if}
+            <!-- Type marker in the corner (SOP shows its step count). -->
+            <span class="type-corner" title={item.kind === "sop" ? `SOP · ${item.steps.length} steps` : "Template"}>
+              {#if item.favorite}<span class="fav-mark"><Icon name="star" size={12} fill={true} /></span>{/if}
+              <Icon name={item.kind === "sop" ? "sop" : "template"} size={13} />
+              {#if item.kind === "sop"}<span class="tc-n">{item.steps.length}</span>{/if}
+            </span>
+
+            <!-- Hover actions sit on a dark corner-piece so they don't clash with the type marker. -->
+            <div class="hover-actions">
+              <button class="star" class:on={item.favorite} title={item.favorite ? "Unpin" : "Pin"} onclick={() => toggleFav(folderId, item)}>
+                <Icon name="star" size={15} fill={item.favorite} />
+              </button>
+              <button class="icon-btn xs" title="Edit" onclick={() => openEditItem(folderId, item)}><Icon name="edit" size={14} /></button>
+              <button class="icon-btn xs" title="Delete" onclick={() => deleteItem(folderId, item)}><Icon name="trash" size={14} /></button>
             </div>
+
+            <div class="name" title={item.name}>{item.name}</div>
+
+            {#if tm || isVirtual}
+              <div class="badges">
+                {#if tm}<span class="badge type">{tm.label}</span>{/if}
+                {#if isVirtual}<span class="badge origin"><span class="odot" style:background={folderColor || "var(--muted)"}></span>{folderName}</span>{/if}
+              </div>
+            {/if}
 
             <p class="preview">{item.kind === "sop" ? item.steps[0]?.text || "" : item.text}</p>
 
@@ -795,7 +807,7 @@
   }
   .card {
     position: relative;
-    border: 1px solid var(--border);
+    border: 1px solid color-mix(in srgb, var(--fcolor) 55%, var(--border));
     border-radius: var(--radius);
     background: var(--surface);
     padding: 14px;
@@ -803,14 +815,15 @@
     flex-direction: column;
     gap: 9px;
     box-shadow: var(--shadow-card);
+    cursor: pointer;
     transition: border-color 0.12s var(--ease), transform 0.08s var(--ease);
   }
   .card:hover {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    border-color: color-mix(in srgb, var(--fcolor) 85%, transparent);
     transform: translateY(-1px);
   }
   .card.fav {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    border-color: color-mix(in srgb, var(--fcolor) 75%, var(--border));
   }
   .card.sel {
     border-color: var(--accent);
@@ -825,46 +838,66 @@
     padding: 0 6px;
     border-radius: 999px;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
     box-shadow: var(--shadow-card);
-    z-index: 2;
-  }
-  .card header {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
+    z-index: 4;
   }
   .name {
     font-weight: 600;
-    flex: 1;
-    min-width: 0;
     font-size: 14.5px;
     line-height: 1.3;
+    padding-right: 30px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     word-break: break-word;
   }
-  .actions {
+
+  /* Corner type marker */
+  .type-corner {
+    position: absolute;
+    top: 11px;
+    right: 12px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--muted);
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .fav-mark {
+    display: flex;
+    color: var(--accent-strong);
+  }
+  .tc-n {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+  }
+
+  /* Hover actions on a dark corner-piece */
+  .hover-actions {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 3;
     display: flex;
     align-items: center;
     gap: 1px;
-    flex-shrink: 0;
-  }
-  .icon-btn.xs {
-    width: 26px;
-    height: 26px;
-    font-size: 12px;
+    padding: 8px 10px 14px 20px;
+    border-radius: 0 var(--radius) 0 16px;
+    background: radial-gradient(135% 135% at 100% 0%, color-mix(in srgb, var(--bg) 95%, transparent) 44%, transparent 74%);
     opacity: 0;
-    transition: opacity 0.12s;
+    transition: opacity 0.12s var(--ease);
   }
-  .card:hover .icon-btn.xs {
+  .card:hover .hover-actions {
     opacity: 1;
   }
   .star {
@@ -872,18 +905,18 @@
     border: none;
     cursor: pointer;
     color: var(--muted);
-    font-size: 15px;
     line-height: 1;
     padding: 3px;
-    opacity: 0;
-    transition: opacity 0.12s, color 0.12s;
-  }
-  .card:hover .star {
-    opacity: 1;
+    display: flex;
+    transition: color 0.12s;
   }
   .star.on {
-    color: var(--accent);
-    opacity: 1;
+    color: var(--accent-strong);
+  }
+  .icon-btn.xs {
+    width: 26px;
+    height: 26px;
+    font-size: 12px;
   }
   .badges {
     display: flex;
@@ -893,7 +926,7 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -903,13 +936,15 @@
     color: var(--muted);
     white-space: nowrap;
   }
-  .badge.sop {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  }
   .badge.origin {
     text-transform: none;
     letter-spacing: 0;
+  }
+  .odot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
   }
   .preview {
     margin: 0;
