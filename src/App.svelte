@@ -83,9 +83,8 @@
 <div class="shell">
   <header class="titlebar" data-tauri-drag-region>
     <div class="left" data-tauri-drag-region>
-      <button class="brand" onclick={() => (view = "library")}>
-        <span class="logo"><Icon name="sparkle" size={17} fill={true} /></span>
-        <span class="wordmark">Castline</span>
+      <button class="brand" onclick={() => (view = "library")} title="Castline">
+        <img class="brand-img" src="/icon.png" alt="Castline" />
       </button>
       <nav class="nav">
         {#each NAV as n}
@@ -184,29 +183,17 @@
   .brand {
     display: flex;
     align-items: center;
-    gap: 9px;
     background: none;
     border: none;
-    color: var(--text);
     cursor: pointer;
     padding: 0;
-    margin-right: 18px;
+    margin-right: 16px;
   }
-  .logo {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
+  .brand-img {
+    width: 30px;
+    height: 30px;
+    display: block;
     border-radius: 7px;
-    color: var(--accent-strong);
-    background: var(--accent-soft);
-    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  }
-  .wordmark {
-    font-weight: 700;
-    font-size: 15px;
-    letter-spacing: -0.01em;
   }
   .nav {
     display: flex;
