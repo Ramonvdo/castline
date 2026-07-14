@@ -4,14 +4,14 @@
   import Icon from "./Icon.svelte";
 
   // props — `layout` is the GLOBAL variable grouping (splitters + ordering),
-  // shared by every profile. It is presentation-only: it never affects `values`,
-  // so webhook / n8n / Make mappings keyed on variable names keep working.
-  let { profiles = [], layout = [], folders = [], flash, onData, onClose } = $props();
+  // shared by every profile. Presentation-only: never affects `values`, so
+  // webhook / n8n / Make mappings keyed on variable names keep working.
+  let { profiles = [], layout = [], folders = [], flash, onData } = $props();
 
   let editingId = $state(null); // null = list, "" = new, <id> = editing
   let name = $state("");
-  let slots = $state([]); // { _id, type:"splitter", label } | { _id, type:"var", name }
-  let valueMap = $state({}); // per-profile: variable name -> value
+  let slots = $state([]);
+  let valueMap = $state({});
 
   let showPaste = $state(false);
   let pasteText = $state("");
@@ -19,8 +19,6 @@
   let sid = 0;
   const nextId = () => `s${++sid}`;
 
-  // Expand the global layout into an editable slot list, appending any variable
-  // used across the library or set on this profile that isn't placed yet.
   function buildSlots(profileValues) {
     const known = new Set();
     const out = [];
@@ -53,13 +51,13 @@
     slots = buildSlots(p.values);
     valueMap = seedValues(slots, p.values);
   }
+  function backToList() {
+    editingId = null;
+  }
 
-  // ── Global layout persistence (fire-and-forget, keeps App in sync) ──
   function toLayout(sl) {
     return sl.map((s) =>
-      s.type === "splitter"
-        ? { type: "splitter", label: s.label, name: "" }
-        : { type: "var", label: "", name: s.name },
+      s.type === "splitter" ? { type: "splitter", label: s.label, name: "" } : { type: "var", label: "", name: s.name },
     );
   }
   async function persistLayout() {
@@ -75,9 +73,7 @@
     const n = prompt("Variable name (no braces), e.g. firstName:");
     if (!n || !n.trim()) return;
     const nm = n.trim();
-    if (!slots.some((s) => s.type === "var" && s.name === nm)) {
-      slots = [...slots, { _id: "v:" + nm, type: "var", name: nm }];
-    }
+    if (!slots.some((s) => s.type === "var" && s.name === nm)) slots = [...slots, { _id: "v:" + nm, type: "var", name: nm }];
     if (!(nm in valueMap)) valueMap = { ...valueMap, [nm]: "" };
     persistLayout();
   }
@@ -96,7 +92,6 @@
     slots = [...slots];
   }
 
-  // ── Drag & drop reordering (native HTML5) ──
   let dragIndex = $state(-1);
   let overIndex = $state(-1);
   function onDrop(i) {
@@ -152,53 +147,52 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => e.target === e.currentTarget && onClose()}>
-  <div class="modal wide">
-    <h3>Profiles</h3>
-
-    {#if editingId === null}
-      {#if profiles.length === 0}
-        <p class="empty">No profiles yet.</p>
-      {:else}
-        <ul class="plist">
-          {#each profiles as p (p.id)}
-            <li>
-              <span class="pname">{p.name}</span>
-              {#if p.source && p.source !== "manual"}<span class="src">{p.source}</span>{/if}
-              <span class="muted">{Object.keys(p.values).length} value(s)</span>
-              <button class="link" onclick={() => editProfile(p)}>Edit</button>
-              <button class="link danger" onclick={() => remove(p)}>Delete</button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-      {#if showPaste}
-        <div class="paste">
-          <label>
-            Create from pasted JSON
-            <textarea
-              class="field"
-              rows="5"
-              placeholder={'{ "first_name": "Sam", "email": "sam@example.com" }'}
-              bind:value={pasteText}
-            ></textarea>
-          </label>
-          <div class="modal-actions">
-            <button class="ghost" onclick={() => (showPaste = false)}>Cancel</button>
-            <button class="btn" onclick={createFromPaste}>Create profile</button>
-          </div>
-        </div>
-      {/if}
-
-      <div class="modal-actions">
-        <button class="ghost" onclick={onClose}>Close</button>
+<div class="view">
+  {#if editingId === null}
+    <div class="view-head">
+      <h2>Profiles</h2>
+      <div class="head-actions">
         <button class="ghost" onclick={() => (showPaste = !showPaste)}>Paste JSON…</button>
         <button class="btn" onclick={newProfile}><Icon name="plus" size={14} /> New profile</button>
       </div>
+    </div>
+    <p class="sub">Saved sets of variable values you can pick in the top bar to auto-fill any copy.</p>
+
+    {#if showPaste}
+      <div class="panel paste">
+        <label>Create from pasted JSON
+          <textarea class="field" rows="5" placeholder={'{ "first_name": "Sam", "email": "sam@example.com" }'} bind:value={pasteText}></textarea>
+        </label>
+        <div class="row-end">
+          <button class="ghost" onclick={() => (showPaste = false)}>Cancel</button>
+          <button class="btn" onclick={createFromPaste}>Create profile</button>
+        </div>
+      </div>
+    {/if}
+
+    {#if profiles.length === 0}
+      <p class="empty">No profiles yet.</p>
     {:else}
-      <label>Profile name<input class="field" bind:value={name} placeholder="e.g. Client ACME" /></label>
+      <ul class="plist">
+        {#each profiles as p (p.id)}
+          <li>
+            <span class="pname">{p.name}</span>
+            {#if p.source && p.source !== "manual"}<span class="srcbadge">{p.source}</span>{/if}
+            <span class="muted">{Object.keys(p.values).length} value(s)</span>
+            <button class="link" onclick={() => editProfile(p)}>Edit</button>
+            <button class="link danger" onclick={() => remove(p)}>Delete</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  {:else}
+    <div class="view-head">
+      <button class="ghost" onclick={backToList}><Icon name="arrowLeft" size={15} /> Profiles</button>
+      <button class="btn" onclick={save}>Save profile</button>
+    </div>
+
+    <div class="panel">
+      <label class="wlabel">Profile name<input class="field" bind:value={name} placeholder="e.g. Client ACME" /></label>
 
       <div class="editor">
         {#each slots as s, i (s._id)}
@@ -214,13 +208,7 @@
           >
             <span class="grip" title="Drag to reorder"><Icon name="grip" size={16} fill={true} /></span>
             {#if s.type === "splitter"}
-              <input
-                class="slabel"
-                value={s.label}
-                oninput={(e) => setLabel(i, e.target.value)}
-                onchange={persistLayout}
-                placeholder="Group name"
-              />
+              <input class="slabel" value={s.label} oninput={(e) => setLabel(i, e.target.value)} onchange={persistLayout} placeholder="Group name" />
               <span class="sline"></span>
             {:else}
               <span class="vname" title={s.name}>{s.name}</span>
@@ -235,23 +223,73 @@
         <button class="ghost" onclick={addSplitter}><Icon name="divider" size={15} /> Add splitter</button>
         <button class="ghost" onclick={addVariable}><Icon name="plus" size={14} /> Add variable</button>
       </div>
-
-      <div class="modal-actions">
-        <button class="ghost" onclick={() => (editingId = null)}>Back</button>
-        <button class="btn" onclick={save}>Save profile</button>
-      </div>
-    {/if}
-  </div>
+    </div>
+  {/if}
 </div>
 
 <style>
+  .view {
+    height: 100%;
+    overflow-y: auto;
+    padding: 22px 26px;
+    max-width: 860px;
+  }
+  .view-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .view-head h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .head-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 6px 0 16px;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--edge);
+    padding: 16px;
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .paste {
+    margin-top: 12px;
+  }
+  .panel label,
+  .wlabel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .row-end {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
   .empty {
     color: var(--muted);
     font-size: 14px;
+    margin-top: 12px;
   }
   .plist {
     list-style: none;
-    margin: 0;
+    margin: 14px 0 0;
     padding: 0;
     display: flex;
     flex-direction: column;
@@ -263,13 +301,14 @@
     gap: 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 9px 11px;
+    background: var(--surface);
+    padding: 11px 13px;
   }
   .pname {
     font-weight: 600;
     flex: 1;
   }
-  .src {
+  .srcbadge {
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -291,24 +330,13 @@
     padding: 0;
   }
   .link.danger {
-    color: #e5667a;
-  }
-  .paste {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    border-top: 1px solid var(--border);
-    padding-top: 12px;
+    color: #d98a8a;
   }
 
-  /* ── Grouped variable editor ── */
   .editor {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    max-height: 48vh;
-    overflow-y: auto;
-    padding-right: 2px;
   }
   .slot {
     display: flex;
@@ -330,7 +358,7 @@
     cursor: grabbing;
   }
   .slot.var .vname {
-    width: 150px;
+    width: 160px;
     flex-shrink: 0;
     font-family: var(--font-mono);
     font-size: 12px;
@@ -342,7 +370,6 @@
   .vval {
     flex: 1;
   }
-  /* splitter = an editable name-tag in front of a horizontal rule */
   .slot.splitter {
     margin-top: 6px;
   }
@@ -355,7 +382,7 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     padding: 2px 0;
-    width: 140px;
+    width: 150px;
     flex-shrink: 0;
   }
   .slabel:focus {

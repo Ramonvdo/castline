@@ -12,7 +12,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use library::{LibraryData, LibraryState};
 use profiles::{ProfilesData, ProfilesState};
-use settings::{AppSettings, SettingsState, WebhookConfig};
+use settings::{AppSettings, ReceiverConfig, SettingsState};
 use webhook::WebhookController;
 
 // ─── Library commands ────────────────────────────────────────────────────────
@@ -125,17 +125,25 @@ fn profiles_set_layout(app: AppHandle, layout: Vec<profiles::LayoutEntry>) -> Pr
     with_profiles(&app, |d| profiles::set_layout(d, layout))
 }
 
-/// Paste-importer: build a profile from a raw JSON string using the same field
-/// mapping as the live webhook receiver.
+/// Paste-importer: build a profile from a raw JSON string (every key passes
+/// through as a variable of the same name).
 #[tauri::command]
 fn profile_from_json(app: AppHandle, json_text: String) -> Result<ProfilesData, String> {
     let payload: serde_json::Value =
         serde_json::from_str(&json_text).map_err(|e| format!("Invalid JSON: {e}"))?;
-    let cfg = app.state::<SettingsState>().snapshot().webhook;
-    let mut profile = webhook::build_profile_from_json(&cfg, &payload)
+    let profile = webhook::build_profile_passthrough(&payload)
         .ok_or_else(|| "The JSON must be an object, e.g. { \"first_name\": \"Sam\" }".to_string())?;
-    profile.source = "import".into();
     Ok(with_profiles(&app, |d| profiles::upsert_profile(d, profile)))
+}
+
+/// Preview (without saving) the profile a webhook would build from a sample
+/// payload — powers the "Test" button in the Webhooks view.
+#[tauri::command]
+fn webhook_preview(webhook: settings::Webhook, json_text: String) -> Result<profiles::Profile, String> {
+    let payload: serde_json::Value =
+        serde_json::from_str(&json_text).map_err(|e| format!("Invalid JSON: {e}"))?;
+    webhook::build_profile_from_json(&webhook, &payload)
+        .ok_or_else(|| "The JSON must be an object, e.g. { \"first_name\": \"Sam\" }".to_string())
 }
 
 // ─── Clipboard ───────────────────────────────────────────────────────────────
@@ -153,33 +161,20 @@ fn get_settings(app: AppHandle) -> AppSettings {
     app.state::<SettingsState>().snapshot()
 }
 
+/// Persist the receiver config (enabled + port + list of webhooks), filling in
+/// ids/tokens/unique paths, then (re)start the listener accordingly.
 #[tauri::command]
-fn set_accent(app: AppHandle, accent: String) -> AppSettings {
-    let state = app.state::<SettingsState>();
-    {
-        let mut s = state.data.lock().unwrap();
-        s.accent = accent;
-    }
-    state.save();
-    state.snapshot()
-}
-
-/// Persist a new webhook configuration and (re)start the receiver accordingly.
-/// When enabling with no token yet, one is generated so the endpoint is secret.
-#[tauri::command]
-fn set_webhook_config(app: AppHandle, config: WebhookConfig) -> AppSettings {
+fn set_receiver(app: AppHandle, config: ReceiverConfig) -> AppSettings {
     let state = app.state::<SettingsState>();
     {
         let mut s = state.data.lock().unwrap();
         let mut cfg = config;
-        if cfg.enabled && cfg.token.trim().is_empty() {
-            cfg.token = format!("{}{}", library::gen_id(), library::gen_id());
-        }
-        s.webhook = cfg;
+        settings::normalize_receiver(&mut cfg);
+        s.receiver = cfg;
     }
     state.save();
-    let cfg = state.snapshot().webhook;
-    app.state::<WebhookController>().apply(&app, &cfg);
+    let r = state.snapshot().receiver;
+    app.state::<WebhookController>().apply(&app, r.enabled, r.port);
     state.snapshot()
 }
 
@@ -291,10 +286,10 @@ pub fn run() {
             profiles_delete,
             profiles_set_layout,
             profile_from_json,
+            webhook_preview,
             clip_copy,
             get_settings,
-            set_accent,
-            set_webhook_config,
+            set_receiver,
             webhook_status,
             get_data_dir,
             reveal_data_dir,
@@ -307,8 +302,8 @@ pub fn run() {
         .setup(|app| {
             // Start the webhook receiver if it was enabled last session.
             let handle = app.handle().clone();
-            let cfg = app.state::<SettingsState>().snapshot().webhook;
-            app.state::<WebhookController>().apply(&handle, &cfg);
+            let r = app.state::<SettingsState>().snapshot().receiver;
+            app.state::<WebhookController>().apply(&handle, r.enabled, r.port);
             Ok(())
         })
         .run(tauri::generate_context!())

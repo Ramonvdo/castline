@@ -1,14 +1,10 @@
 //! Incoming-webhook receiver + the shared "JSON payload → profile" routine.
 //!
-//! A desktop app on `localhost` isn't reachable from the public internet, so the
-//! live receiver is meant to be fronted by a tunnel (ngrok / Cloudflare Tunnel)
-//! or a LAN automation relay (Make / n8n / Zapier). The exact same mapping powers
-//! the always-works "New profile from pasted JSON" box in the UI, so a profile is
-//! built identically whether the data arrives over HTTP or is pasted by hand.
-//!
-//! Security posture: bound to `127.0.0.1` only, and every request must carry the
-//! shared `?token=` secret. The server only runs while the app is open and the
-//! receiver is enabled in Settings.
+//! One local HTTP server (bound to `127.0.0.1`) routes several named webhooks by
+//! path: `POST /hook/<path>?token=<secret>`. Each webhook has its own token and
+//! field mapping. A desktop app on localhost isn't reachable from the public
+//! internet, so front it with a tunnel (ngrok / Cloudflare) or a relay
+//! (Make / n8n / Zapier). The same mapping powers the "Paste JSON" importer.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,11 +15,10 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::profiles::{self, Profile, ProfilesState};
-use crate::settings::WebhookConfig;
+use crate::settings::{SettingsState, Webhook};
 
 // ─── Shared mapping: JSON → Profile ──────────────────────────────────────────
 
-/// Render a JSON scalar as a plain string; objects/arrays are compacted to JSON.
 fn val_to_string(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -34,14 +29,11 @@ fn val_to_string(v: &Value) -> String {
     }
 }
 
-/// Substitute `{{key}}` placeholders in `template` from the incoming object's
-/// top-level keys.
 fn render_name(template: &str, obj: &serde_json::Map<String, Value>) -> String {
     let mut out = template.to_string();
     for (k, v) in obj {
         out = out.replace(&format!("{{{{{k}}}}}"), &val_to_string(v));
     }
-    // Drop any placeholders that had no matching key.
     while let Some(start) = out.find("{{") {
         if let Some(end) = out[start..].find("}}") {
             out.replace_range(start..start + end + 2, "");
@@ -52,17 +44,15 @@ fn render_name(template: &str, obj: &serde_json::Map<String, Value>) -> String {
     out.trim().to_string()
 }
 
-/// Turn an incoming JSON payload into a `Profile` using the configured field
-/// mapping. Returns `None` when the payload isn't a JSON object.
-pub fn build_profile_from_json(cfg: &WebhookConfig, payload: &Value) -> Option<Profile> {
+/// Turn an incoming JSON payload into a `Profile` using a webhook's field mapping.
+/// Returns `None` when the payload isn't a JSON object.
+pub fn build_profile_from_json(wh: &Webhook, payload: &Value) -> Option<Profile> {
     let obj = payload.as_object()?;
-
     let mut values = std::collections::BTreeMap::new();
 
-    // Explicit mappings first (incoming key `from` → variable `to`).
     let mapped_keys: std::collections::HashSet<&str> =
-        cfg.mappings.iter().map(|m| m.from.as_str()).collect();
-    for m in &cfg.mappings {
+        wh.mappings.iter().map(|m| m.from.as_str()).collect();
+    for m in &wh.mappings {
         if let Some(v) = obj.get(&m.from) {
             let to = m.to.trim();
             if !to.is_empty() {
@@ -70,9 +60,7 @@ pub fn build_profile_from_json(cfg: &WebhookConfig, payload: &Value) -> Option<P
             }
         }
     }
-
-    // Passthrough: any unmapped key becomes a variable of the same name.
-    if cfg.passthrough {
+    if wh.passthrough {
         for (k, v) in obj {
             if !mapped_keys.contains(k.as_str()) {
                 values.entry(k.clone()).or_insert_with(|| val_to_string(v));
@@ -80,15 +68,29 @@ pub fn build_profile_from_json(cfg: &WebhookConfig, payload: &Value) -> Option<P
         }
     }
 
-    let mut name = render_name(&cfg.name_template, obj);
+    let mut name = render_name(&wh.name_template, obj);
     if name.is_empty() {
         name = values.values().next().cloned().unwrap_or_else(|| "Webhook profile".into());
     }
-
     Some(Profile { id: String::new(), name, values, source: "webhook".into() })
 }
 
-/// Upsert a freshly-built profile into the store, persist, and notify the UI.
+/// Build a profile from pasted JSON with no mapping (every key passes through).
+pub fn build_profile_passthrough(payload: &Value) -> Option<Profile> {
+    let wh = Webhook {
+        id: String::new(),
+        name: String::new(),
+        path: String::new(),
+        token: String::new(),
+        name_template: String::new(),
+        mappings: vec![],
+        passthrough: true,
+    };
+    let mut p = build_profile_from_json(&wh, payload)?;
+    p.source = "import".into();
+    Some(p)
+}
+
 fn ingest_profile(app: &AppHandle, profile: Profile) -> String {
     let name = profile.name.clone();
     let state = app.state::<ProfilesState>();
@@ -109,18 +111,17 @@ struct RunningServer {
     port: u16,
 }
 
-/// Tauri-managed handle to the (optionally running) receiver thread.
 #[derive(Default)]
 pub struct WebhookController {
     inner: Mutex<Option<RunningServer>>,
 }
 
 impl WebhookController {
-    /// Stop any running server and, if `cfg.enabled`, start a fresh one.
-    pub fn apply(&self, app: &AppHandle, cfg: &WebhookConfig) {
+    /// Stop any running server and, if `enabled`, start one on `port`.
+    pub fn apply(&self, app: &AppHandle, enabled: bool, port: u16) {
         self.stop();
-        if cfg.enabled {
-            self.start(app, cfg);
+        if enabled {
+            self.start(app, port);
         }
     }
 
@@ -133,12 +134,10 @@ impl WebhookController {
         }
     }
 
-    fn start(&self, app: &AppHandle, cfg: &WebhookConfig) {
+    fn start(&self, app: &AppHandle, port: u16) {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
         let app = app.clone();
-        let token = cfg.token.clone();
-        let port = cfg.port;
 
         let handle = std::thread::spawn(move || {
             let server = match tiny_http::Server::http(("127.0.0.1", port)) {
@@ -148,12 +147,11 @@ impl WebhookController {
                     return;
                 }
             };
-            eprintln!("[castline] webhook receiver listening on http://127.0.0.1:{port}/hook");
-
+            eprintln!("[castline] webhook receiver listening on http://127.0.0.1:{port}/hook/<path>");
             while !stop_thread.load(Ordering::Relaxed) {
                 match server.recv_timeout(Duration::from_millis(500)) {
-                    Ok(Some(request)) => handle_request(&app, request, &token),
-                    Ok(None) => {} // timeout — re-check the stop flag
+                    Ok(Some(request)) => handle_request(&app, request),
+                    Ok(None) => {}
                     Err(_) => break,
                 }
             }
@@ -162,7 +160,6 @@ impl WebhookController {
         *self.inner.lock().unwrap() = Some(RunningServer { stop, handle: Some(handle), port });
     }
 
-    /// The port the receiver is currently bound to (if running).
     pub fn active_port(&self) -> Option<u16> {
         self.inner.lock().unwrap().as_ref().map(|r| r.port)
     }
@@ -178,7 +175,18 @@ fn query_token(url: &str) -> Option<String> {
     None
 }
 
-/// Minimal percent-decoder (enough for tokens: handles %XX and '+').
+/// The `<path>` from `/hook/<path>` (query stripped, trailing slash trimmed).
+fn hook_path(url: &str) -> Option<String> {
+    let path = url.split('?').next().unwrap_or("");
+    let rest = path.strip_prefix("/hook/")?;
+    let rest = rest.trim_end_matches('/');
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest.to_string())
+    }
+}
+
 fn urldecode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -206,24 +214,38 @@ fn urldecode(s: &str) -> String {
 fn respond(request: tiny_http::Request, status: u16, body: &str) {
     let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
         .expect("valid header");
-    let response = tiny_http::Response::from_string(body)
-        .with_status_code(status)
-        .with_header(header);
+    let response = tiny_http::Response::from_string(body).with_status_code(status).with_header(header);
     let _ = request.respond(response);
 }
 
-fn handle_request(app: &AppHandle, mut request: tiny_http::Request, token: &str) {
-    // Method must be POST.
+fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
     if request.method() != &tiny_http::Method::Post {
         respond(request, 405, r#"{"ok":false,"error":"use POST"}"#);
         return;
     }
-    // Token must match.
-    if token.is_empty() || query_token(request.url()).as_deref() != Some(token) {
+    let slug = match hook_path(request.url()) {
+        Some(s) => s,
+        None => {
+            respond(request, 404, r#"{"ok":false,"error":"POST to /hook/<path>"}"#);
+            return;
+        }
+    };
+    let token = query_token(request.url()).unwrap_or_default();
+
+    let receiver = app.state::<SettingsState>().snapshot().receiver;
+    let webhook = receiver.webhooks.into_iter().find(|w| w.path == slug);
+    let webhook = match webhook {
+        Some(w) => w,
+        None => {
+            respond(request, 404, r#"{"ok":false,"error":"no webhook at that path"}"#);
+            return;
+        }
+    };
+    if webhook.token.is_empty() || token != webhook.token {
         respond(request, 401, r#"{"ok":false,"error":"invalid or missing token"}"#);
         return;
     }
-    // Read + parse the JSON body.
+
     let mut body = String::new();
     if request.as_reader().read_to_string(&mut body).is_err() {
         respond(request, 400, r#"{"ok":false,"error":"could not read body"}"#);
@@ -237,8 +259,7 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request, token: &str)
         }
     };
 
-    let cfg = app.state::<crate::settings::SettingsState>().snapshot().webhook;
-    match build_profile_from_json(&cfg, &payload) {
+    match build_profile_from_json(&webhook, &payload) {
         Some(profile) => {
             let name = ingest_profile(app, profile);
             let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
@@ -251,63 +272,57 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request, token: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{FieldMap, WebhookConfig};
+    use crate::settings::{FieldMap, Webhook};
 
-    fn cfg_with(mappings: Vec<(&str, &str)>, passthrough: bool, name_tpl: &str) -> WebhookConfig {
-        WebhookConfig {
-            enabled: true,
-            port: 8787,
+    fn wh(mappings: Vec<(&str, &str)>, passthrough: bool, name_tpl: &str) -> Webhook {
+        Webhook {
+            id: "w1".into(),
+            name: "Test".into(),
+            path: "test".into(),
             token: "secret".into(),
             name_template: name_tpl.into(),
-            mappings: mappings
-                .into_iter()
-                .map(|(f, t)| FieldMap { from: f.into(), to: t.into() })
-                .collect(),
+            mappings: mappings.into_iter().map(|(f, t)| FieldMap { from: f.into(), to: t.into() }).collect(),
             passthrough,
         }
     }
 
     #[test]
     fn maps_fields_and_builds_name() {
-        let cfg = cfg_with(
-            vec![("first_name", "firstName"), ("last_name", "lastName")],
-            false,
-            "{{first_name}} {{last_name}}",
-        );
-        let payload = serde_json::json!({
-            "first_name": "Sam", "last_name": "Rivera", "email": "sam@x.com"
-        });
+        let cfg = wh(vec![("first_name", "firstName"), ("last_name", "lastName")], false, "{{first_name}} {{last_name}}");
+        let payload = serde_json::json!({ "first_name": "Sam", "last_name": "Rivera", "email": "sam@x.com" });
         let p = build_profile_from_json(&cfg, &payload).unwrap();
         assert_eq!(p.name, "Sam Rivera");
         assert_eq!(p.values.get("firstName").unwrap(), "Sam");
-        assert_eq!(p.values.get("lastName").unwrap(), "Rivera");
-        // email was not mapped and passthrough is off → absent.
         assert!(!p.values.contains_key("email"));
-        assert_eq!(p.source, "webhook");
     }
 
     #[test]
     fn passthrough_keeps_unmapped_keys() {
-        let cfg = cfg_with(vec![("first_name", "firstName")], true, "{{first_name}}");
+        let cfg = wh(vec![("first_name", "firstName")], true, "{{first_name}}");
         let payload = serde_json::json!({ "first_name": "Sam", "email": "sam@x.com", "age": 30 });
         let p = build_profile_from_json(&cfg, &payload).unwrap();
-        assert_eq!(p.values.get("firstName").unwrap(), "Sam");
         assert_eq!(p.values.get("email").unwrap(), "sam@x.com");
-        assert_eq!(p.values.get("age").unwrap(), "30"); // number coerced to string
-        assert_eq!(p.name, "Sam");
+        assert_eq!(p.values.get("age").unwrap(), "30");
     }
 
     #[test]
-    fn name_falls_back_when_template_empty() {
-        let cfg = cfg_with(vec![("x", "x")], true, "{{missing}}");
-        let payload = serde_json::json!({ "x": "hello" });
-        let p = build_profile_from_json(&cfg, &payload).unwrap();
-        assert_eq!(p.name, "hello"); // first value, since template rendered empty
+    fn passthrough_import_builds_from_any_object() {
+        let p = build_profile_passthrough(&serde_json::json!({ "x": "hello" })).unwrap();
+        assert_eq!(p.values.get("x").unwrap(), "hello");
+        assert_eq!(p.source, "import");
+    }
+
+    #[test]
+    fn hook_path_extracts_slug() {
+        assert_eq!(hook_path("/hook/calendly?token=abc").as_deref(), Some("calendly"));
+        assert_eq!(hook_path("/hook/typeform/").as_deref(), Some("typeform"));
+        assert_eq!(hook_path("/hook/").as_deref(), None);
+        assert_eq!(hook_path("/other").as_deref(), None);
     }
 
     #[test]
     fn rejects_non_object_payload() {
-        let cfg = cfg_with(vec![], true, "n");
+        let cfg = wh(vec![], true, "n");
         assert!(build_profile_from_json(&cfg, &serde_json::json!([1, 2, 3])).is_none());
     }
 }

@@ -1,36 +1,34 @@
 :root {
-  /* Dark metallic-blue, monochrome. One blue hue for everything — navy ground,
-     blue-tinted neutrals, an accent that's the same hue just brighter. The
-     surfaces (--bg/--surface/--elevated/--border) are recomputed in JS
-     (applyAccent in api.js) from navy bases so they stay monochrome even if the
-     accent is changed; these statics are the safe fallbacks. */
-  --bg: #0a0f1a;
-  --surface: #0f1826;
-  --elevated: #16223a;
-  --well: #070b14; /* sunken input recess */
-  --border: rgba(200, 216, 248, 0.1);
-  --border-strong: rgba(200, 216, 248, 0.18);
-  --text: #e9f0ff;
-  --muted: #90a2c2;
-  --faint: #62718e;
-  --accent: #5f9cf2;
-  /* Derived from --accent so a custom accent stays coherent. */
-  --accent-strong: color-mix(in srgb, var(--accent) 78%, #ffffff);
-  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  /* Fixed dark gunmetal-slate, monochrome. One desaturated slate hue for
+     everything — dark slate ground, muted slate accent that's the same family
+     just brighter. Not user-configurable by design. */
+  --bg: #1c2632;
+  --surface: #222d3a;
+  --elevated: #2a3644;
+  --well: #151d27; /* sunken input recess */
+  --border: rgba(139, 159, 164, 0.16);
+  --border-strong: rgba(139, 159, 164, 0.3);
+  --text: #e6ecee;
+  --muted: #9aabb0;
+  --faint: #6d7f85;
+  --accent: #8b9fa4;
+  --accent-strong: #adbfc3;
+  --accent-soft: rgba(139, 159, 164, 0.16);
+  --on-accent: #17202a; /* dark text on the light-slate accent (metal) */
 
   --radius-sm: 7px;
   --radius: 9px;
   --radius-lg: 13px;
 
-  /* Metallic materiality — polished top edge + navy-tinted depth (no neon). */
-  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  /* Metallic materiality — polished top edge + slate-tinted depth (no neon). */
+  --edge: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 42%);
-  --btn-accent: linear-gradient(180deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0) 44%),
-    linear-gradient(180deg, #6aa6f5 0%, #4681cf 100%);
-  --btn-accent-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0) 44%),
-    linear-gradient(180deg, #79b0f8 0%, #4f8cdb 100%);
-  --shadow-card: 0 8px 22px -14px rgba(2, 6, 16, 0.85), var(--edge);
-  --shadow-modal: 0 30px 66px -20px rgba(1, 4, 10, 0.9);
+  --btn-accent: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 46%),
+    linear-gradient(180deg, #9cb0b5 0%, #7d9297 100%);
+  --btn-accent-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0) 46%),
+    linear-gradient(180deg, #a8bbbf 0%, #8a9ea3 100%);
+  --shadow-card: 0 8px 22px -14px rgba(6, 10, 14, 0.85), var(--edge);
+  --shadow-modal: 0 30px 66px -20px rgba(3, 6, 10, 0.9);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 
   --font-sans: "Segoe UI Variable Text", -apple-system, BlinkMacSystemFont,
@@ -103,10 +101,10 @@ select {
   border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, var(--accent) 55%, #000);
   background: var(--btn-accent);
-  color: #fff;
+  color: var(--on-accent);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   box-shadow: var(--shadow-card);
   transition: background 0.12s var(--ease), transform 0.06s var(--ease);
   white-space: nowrap;

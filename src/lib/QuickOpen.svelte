@@ -1,10 +1,10 @@
 <script>
-  import { itemVars, itemPlainText } from "./vars.js";
+  import { itemVars, itemPlainText, applyVars } from "./vars.js";
   import { clipCopy } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props
-  let { library, flash, onFill, onClose } = $props();
+  let { library, activeProfile = null, flash, onFill, onClose } = $props();
 
   let query = $state("");
   let active = $state(0);
@@ -63,13 +63,17 @@
 
   async function choose(entry) {
     if (!entry) return;
-    if (itemVars(entry.item).length) {
-      onFill(entry.item);
-    } else {
-      const ok = await clipCopy(itemPlainText(entry.item));
-      flash(ok ? `Copied “${entry.item.name}”` : "Copy failed");
-      onClose();
+    const item = entry.item;
+    // No active profile + has variables → open the fill / step-by-step flow.
+    if (itemVars(item).length && !activeProfile) {
+      onFill(item, item.kind === "sop" ? "steps" : "auto");
+      return;
     }
+    const raw = itemPlainText(item);
+    const text = activeProfile ? applyVars(raw, activeProfile.values) : raw;
+    const ok = await clipCopy(text);
+    flash(ok ? `Copied “${item.name}”${activeProfile ? " · " + activeProfile.name : ""}` : "Copy failed");
+    onClose();
   }
 
   function onKey(e) {

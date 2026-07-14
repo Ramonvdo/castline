@@ -13,11 +13,13 @@
     pickSaveDoc,
     saveTextFile,
   } from "./api.js";
-  import { extractVars, itemVars, itemPlainText, typeMeta } from "./vars.js";
+  import { extractVars, itemVars, itemPlainText, typeMeta, applyVars } from "./vars.js";
   import Icon from "./Icon.svelte";
+  import FolderIcon from "./FolderIcon.svelte";
+  import { FOLDER_ICON_NAMES, FOLDER_COLORS } from "./foldericons.js";
 
   // props (library is bindable so imports/webhook refreshes from the parent flow in)
-  let { library = $bindable(), profiles = [], flash, onFill } = $props();
+  let { library = $bindable(), profiles = [], layout = [], activeProfile = null, flash, onFill } = $props();
 
   const ALL = "__all";
   const FAV = "__fav";
@@ -25,7 +27,6 @@
   let activeId = $state(ALL);
   let search = $state("");
   let selectedTags = $state([]);
-  let colorInput; // hidden <input type=color>
 
   let realFolders = $derived(library.folders || []);
   let activeFolder = $derived(realFolders.find((f) => f.id === activeId) || null);
@@ -95,15 +96,16 @@
     library = await libDeleteFolder(activeFolder.id);
     activeId = ALL;
   }
-  async function pickFolderIcon() {
+  // ── Folder customization popover (icon + colour) ──
+  let customizeOpen = $state(false);
+  let colorInputEl;
+  async function setIcon(nameStr) {
     if (!activeFolder) return;
-    const icon = prompt("Folder icon (an emoji):", activeFolder.icon || "📁");
-    if (icon === null) return;
-    library = await libSetFolderIcon(activeFolder.id, icon.trim());
+    library = await libSetFolderIcon(activeFolder.id, nameStr);
   }
-  async function folderColor(e) {
+  async function setColor(hex) {
     if (!activeFolder) return;
-    library = await libSetFolderColor(activeFolder.id, e.target.value);
+    library = await libSetFolderColor(activeFolder.id, hex);
   }
 
   // ── Item editor ──
@@ -212,9 +214,12 @@
   async function toggleFav(folderId, item) {
     library = await libToggleFavorite(folderId, item.id);
   }
-  async function copyRaw(item) {
-    const ok = await clipCopy(itemPlainText(item));
-    flash(ok ? "Copied" : "Copy failed");
+  // Copy an item; if a profile is active in the top bar, fill its {{variables}}.
+  async function copyItem(item) {
+    const raw = itemPlainText(item);
+    const text = activeProfile ? applyVars(raw, activeProfile.values) : raw;
+    const ok = await clipCopy(text);
+    flash(ok ? (activeProfile ? `Copied · ${activeProfile.name}` : "Copied") : "Copy failed");
   }
 
   // ── Multi-select (Ctrl/Cmd+click) — ordered, so selection order == copy order ──
@@ -333,9 +338,7 @@
       {#each realFolders as f (f.id)}
         <li>
           <button class="folder" class:active={f.id === activeId} onclick={() => (activeId = f.id)}>
-            <span class="ficon" style:color={f.color || "inherit"}>
-              {#if f.icon}{f.icon}{:else}<Icon name="folder" size={16} />{/if}
-            </span>
+            <span class="ficon"><FolderIcon name={f.icon || "folder"} color={f.color || "var(--muted)"} size={16} /></span>
             <span class="fname">{f.name}</span>
             <span class="count">{f.items.length}</span>
           </button>
@@ -356,18 +359,37 @@
 
     {#if !isVirtual && activeFolder}
       <div class="folder-bar">
-        <span class="fb-icon">{#if activeFolder.icon}{activeFolder.icon}{:else}<Icon name="folder" size={17} />{/if}</span>
+        <span class="fb-icon"><FolderIcon name={activeFolder.icon || "folder"} color={activeFolder.color || "var(--muted)"} size={18} /></span>
         <strong>{activeFolder.name}</strong>
         <span class="fcount">{activeFolder.items.length} item{activeFolder.items.length === 1 ? "" : "s"}</span>
         <div class="folder-actions">
-          <button class="icon-btn" title="Set folder emoji" onclick={pickFolderIcon}><Icon name="sparkle" size={15} /></button>
-          <button class="icon-btn" title="Folder colour" onclick={() => colorInput?.click()}>
-            <span class="swatch" style:background={activeFolder.color || "var(--border)"}></span>
-          </button>
-          <input bind:this={colorInput} class="hidden-color" type="color" value={activeFolder.color || "#4f8cff"} onchange={folderColor} />
+          <button class="icon-btn" title="Customize folder" onclick={() => (customizeOpen = !customizeOpen)}><Icon name="sliders" size={15} /></button>
           <button class="icon-btn" title="Rename" onclick={renameFolder}><Icon name="edit" size={15} /></button>
           <button class="icon-btn" title="Delete folder" onclick={deleteFolder}><Icon name="trash" size={15} /></button>
         </div>
+
+        {#if customizeOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div class="backdrop" onclick={() => (customizeOpen = false)}></div>
+          <div class="cust">
+            <div class="cust-sec">Icon</div>
+            <div class="icongrid">
+              {#each FOLDER_ICON_NAMES as n}
+                <button class="ic" class:sel={(activeFolder.icon || "folder") === n} onclick={() => setIcon(n)}>
+                  <FolderIcon name={n} color={activeFolder.color || "var(--muted)"} size={18} />
+                </button>
+              {/each}
+            </div>
+            <div class="cust-sec">Colour</div>
+            <div class="swatches">
+              {#each FOLDER_COLORS as c}
+                <button class="sw" class:sel={activeFolder.color === c} style:background={c} onclick={() => setColor(c)} title={c} aria-label={c}></button>
+              {/each}
+              <button class="sw custom" title="Custom colour" onclick={() => colorInputEl?.click()}><Icon name="plus" size={13} /></button>
+              <input bind:this={colorInputEl} class="hidden-color" type="color" value={activeFolder.color || "#8b9fa4"} onchange={(e) => setColor(e.target.value)} />
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -428,8 +450,13 @@
             {/if}
 
             <footer>
-              <button class="act" onclick={() => copyRaw(item)}><Icon name="copy" size={13} /> Copy</button>
-              {#if vars.length}<button class="act primary" onclick={() => onFill(item)}><Icon name="sparkle" size={13} /> Fill &amp; copy</button>{/if}
+              {#if item.kind === "sop"}
+                <button class="act primary" onclick={() => onFill(item, "steps")}><Icon name="sop" size={13} /> Copy steps</button>
+                <button class="act" onclick={() => copyItem(item)}><Icon name="copy" size={13} /> Copy all</button>
+              {:else}
+                <button class="act" onclick={() => copyItem(item)}><Icon name="copy" size={13} /> Copy</button>
+                {#if vars.length}<button class="act primary" onclick={() => onFill(item)}><Icon name="sparkle" size={13} /> Fill &amp; copy</button>{/if}
+              {/if}
             </footer>
           </article>
         {/each}
@@ -640,11 +667,85 @@
     border-color: var(--accent);
   }
   .folder-bar {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
     margin-bottom: 12px;
     font-size: 15px;
+  }
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+  }
+  .cust {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 31;
+    width: 250px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .cust-sec {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+  }
+  .icongrid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 3px;
+  }
+  .ic {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: none;
+    cursor: pointer;
+  }
+  .ic:hover {
+    background: var(--elevated);
+  }
+  .ic.sel {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .sw {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+  }
+  .sw.sel {
+    border-color: var(--text);
+  }
+  .sw.custom {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--elevated);
+    border: 1px dashed var(--border-strong);
+    color: var(--muted);
   }
   .fb-icon {
     font-size: 16px;

@@ -2,20 +2,21 @@
   import { extractVars, applyVars, itemVars, groupVarsByLayout } from "./vars.js";
   import { clipCopy } from "./api.js";
 
-  // props — `layout` is the global variable grouping (presentation only).
-  let { item, profiles = [], layout = [], flash, onClose } = $props();
+  // props
+  let { item, mode = "auto", profiles = [], layout = [], activeProfile = null, flash, onClose } = $props();
 
   let values = $state({});
   let stepIdx = $state(0);
   let profileId = $state("");
 
-  // Seed empty keys so every input is controlled. Depends only on `item` (never
-  // reads `values`) so typing / loading a profile doesn't retrigger a reset.
+  // Seed keys; prefill from the active profile (or a picked one) where present.
   $effect(() => {
+    const src = activeProfile ? activeProfile.values : {};
     const seed = {};
-    for (const v of itemVars(item)) seed[v] = "";
+    for (const v of itemVars(item)) seed[v] = src[v] ?? "";
     values = seed;
     stepIdx = 0;
+    profileId = activeProfile ? activeProfile.id : "";
   });
 
   function applyProfile() {
@@ -28,18 +29,58 @@
   let step = $derived(isSop ? item.steps[stepIdx] : null);
   let stepVars = $derived(step ? extractVars(step.text) : []);
   let templateVars = $derived(!isSop && item ? extractVars(item.text) : []);
-  // Group the fill inputs under the same splitters as the profile editor.
   let stepGroups = $derived(groupVarsByLayout(stepVars, layout).filter((g) => g.vars.length));
   let templateGroups = $derived(groupVarsByLayout(templateVars, layout).filter((g) => g.vars.length));
+
   let preview = $derived.by(() => {
     if (!item) return "";
     if (isSop) return step ? applyVars(step.text, values) : "";
     return applyVars(item.text, values);
   });
 
-  async function copyFilled() {
+  // Split the preview so any still-unfilled {{placeholder}} can be accent-highlighted.
+  const PH_RE = /\{\{\s*[^{}]+?\s*\}\}/g;
+  let previewSegs = $derived.by(() => {
+    const text = preview;
+    const out = [];
+    let last = 0;
+    let m;
+    PH_RE.lastIndex = 0;
+    while ((m = PH_RE.exec(text)) !== null) {
+      if (m.index > last) out.push({ t: text.slice(last, m.index), v: false });
+      out.push({ t: m[0], v: true });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push({ t: text.slice(last), v: false });
+    return out;
+  });
+
+  let isLastStep = $derived(isSop && stepIdx >= item.steps.length - 1);
+
+  async function copyThis() {
     const ok = await clipCopy(preview);
-    flash(ok ? (isSop ? "Copied this step" : "Copied filled text") : "Copy failed");
+    if (!ok) {
+      flash("Copy failed");
+      return;
+    }
+    if (isSop) {
+      if (isLastStep) {
+        flash(`Copied step ${stepIdx + 1} · done`);
+        onClose();
+      } else {
+        flash(`Copied step ${stepIdx + 1}`);
+        stepIdx += 1;
+      }
+    } else {
+      flash("Copied");
+      onClose();
+    }
+  }
+  async function copyAll() {
+    const text = (item.steps || []).map((s) => applyVars(s.text, values)).join("\n\n");
+    const ok = await clipCopy(text);
+    flash(ok ? "Copied all steps" : "Copy failed");
+    if (ok) onClose();
   }
   function next() {
     if (isSop && stepIdx < item.steps.length - 1) stepIdx += 1;
@@ -52,13 +93,13 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="overlay" onclick={(e) => e.target === e.currentTarget && onClose()}>
   <div class="modal wide">
-    <h3>Fill &amp; copy — {item.name}</h3>
+    <h3>{isSop ? "Copy step-by-step" : "Fill & copy"} — {item.name}</h3>
 
     {#if profiles.length}
       <label>
-        Load values from a profile
+        Fill from a profile
         <select class="field" bind:value={profileId} onchange={applyProfile}>
-          <option value="">— pick a profile —</option>
+          <option value="">— none —</option>
           {#each profiles as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
         </select>
       </label>
@@ -90,19 +131,19 @@
       </div>
     {/if}
 
-    <label>
-      Preview
-      <textarea class="field preview-box" rows="7" readonly value={preview}></textarea>
-    </label>
+    <div class="preview-wrap">
+      <span class="preview-label">Preview</span>
+      <div class="preview-box">{#each previewSegs as s}{#if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
+    </div>
 
     <div class="modal-actions">
       <button class="ghost" onclick={onClose}>Close</button>
       {#if isSop}
+        <button class="ghost" onclick={copyAll}>Copy all</button>
         <button class="ghost" onclick={prev} disabled={stepIdx === 0}>← Prev</button>
-        <button class="btn" onclick={copyFilled}>Copy this step</button>
-        <button class="ghost" onclick={next} disabled={stepIdx === item.steps.length - 1}>Next →</button>
+        <button class="btn" onclick={copyThis}>{isLastStep ? "Copy & finish" : "Copy & next →"}</button>
       {:else}
-        <button class="btn" onclick={copyFilled}>Copy</button>
+        <button class="btn" onclick={copyThis}>Copy</button>
       {/if}
     </div>
   </div>
@@ -153,9 +194,34 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .preview-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .preview-label {
+    font-size: 12px;
+    color: var(--muted);
+  }
   .preview-box {
-    font-family: ui-monospace, "SF Mono", monospace;
+    font-family: var(--font-mono);
     white-space: pre-wrap;
+    word-break: break-word;
     font-size: 12.5px;
+    line-height: 1.55;
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+    padding: 11px 12px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .ph {
+    color: var(--accent-strong);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    padding: 0 3px;
+    font-weight: 600;
   }
 </style>

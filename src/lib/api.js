@@ -30,11 +30,11 @@ export const profileFromJson = (jsonText) => invoke("profile_from_json", { jsonT
 // ── Clipboard ──
 export const clipCopy = (text) => invoke("clip_copy", { text });
 
-// ── Settings / appearance / webhook ──
+// ── Settings / webhooks ──
 export const getSettings = () => invoke("get_settings");
-export const setAccent = (accent) => invoke("set_accent", { accent });
-export const setWebhookConfig = (config) => invoke("set_webhook_config", { config });
+export const setReceiver = (config) => invoke("set_receiver", { config });
 export const webhookStatus = () => invoke("webhook_status");
+export const webhookPreview = (webhook, jsonText) => invoke("webhook_preview", { webhook, jsonText });
 
 // ── Import / export / reveal ──
 export const getDataDir = () => invoke("get_data_dir");
@@ -69,36 +69,4 @@ export async function pickSaveDoc(defaultName) {
 export async function pickOpenFile() {
   const path = await open({ multiple: false, filters: JSON_FILTER });
   return typeof path === "string" ? path : null;
-}
-
-// ── Theming ──
-// Blend a hex accent toward a base hex by `amt` (0..1), returning an rgb() string.
-// Pure JS so it never depends on CSS color-mix.
-function blendHex(accent, base, amt) {
-  const toRgb = (h) => {
-    let s = String(h || "").replace("#", "").trim();
-    if (s.length === 3) s = s.split("").map((c) => c + c).join("");
-    if (!/^[0-9a-fA-F]{6}$/.test(s)) return null;
-    const n = parseInt(s, 16);
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  };
-  const a = toRgb(accent);
-  const b = toRgb(base);
-  if (!a || !b) return base;
-  const c = (i) => Math.round(a[i] * amt + b[i] * (1 - amt));
-  return `rgb(${c(0)}, ${c(1)}, ${c(2)})`;
-}
-
-// Apply an accent to the document's CSS variables. Surfaces are tinted toward the
-// accent so the whole (dark) UI shifts hue with it, computed in JS.
-export function applyAccent(accent) {
-  const root = document.documentElement;
-  const a = accent || "#5f9cf2";
-  root.style.setProperty("--accent", a);
-  // Navy bases keep the whole UI monochrome-blue; a light accent blend adds the
-  // faint metallic tint without ever going neutral-grey.
-  root.style.setProperty("--bg", blendHex(a, "#0a0f1a", 0.05));
-  root.style.setProperty("--surface", blendHex(a, "#0f1826", 0.06));
-  root.style.setProperty("--elevated", blendHex(a, "#16223a", 0.08));
-  root.style.setProperty("--border", blendHex(a, "#26314c", 0.16));
 }

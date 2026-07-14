@@ -89,7 +89,7 @@ impl Default for LibraryData {
             folders: vec![LibFolder {
                 id: gen_id(),
                 name: "General".into(),
-                color: "#4f8cff".into(),
+                color: "#8b9fa4".into(),
                 icon: String::new(),
                 items: vec![
                     LibItem {
