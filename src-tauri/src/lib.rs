@@ -229,10 +229,11 @@ fn usage_context(app: &AppHandle) -> String {
 }
 
 /// "Castline AI" enrich: one OpenRouter call that fills the library's variables
-/// for the given profile values. `context` carries user-supplied notes / an
-/// attached file; `web_search` overrides the saved default for this run;
-/// `tone` is the profile's override (falls back to Settings, then the built-in
-/// default). Returns a JSON object string (name → value).
+/// for the given profile values. Everything beyond the values is opt-in per
+/// run (the enrich dialog's checkboxes): `web_search` (live web), `use_tone`
+/// (profile tone → Settings tone; nothing if both empty), `use_library` (the
+/// templates where the variables are used). `context` carries user notes / an
+/// attached file. Returns a JSON object string (name → value).
 #[tauri::command]
 fn llm_enrich(
     app: AppHandle,
@@ -240,15 +241,22 @@ fn llm_enrich(
     context: Option<String>,
     web_search: Option<bool>,
     tone: Option<String>,
+    use_tone: Option<bool>,
+    use_library: Option<bool>,
 ) -> Result<String, String> {
     let mut cfg = app.state::<SettingsState>().snapshot().llm;
     if let Some(w) = web_search {
         cfg.web_search = w;
     }
     let vars = variable_docs(&app);
-    let usage = usage_context(&app);
-    let profile_tone = tone.unwrap_or_default();
-    let tone = llm::effective_tone(&profile_tone, &cfg.tone).to_string();
+    let usage =
+        if use_library.unwrap_or(false) { usage_context(&app) } else { String::new() };
+    let tone = if use_tone.unwrap_or(false) {
+        let profile_tone = tone.unwrap_or_default();
+        llm::effective_tone(&profile_tone, &cfg.tone).to_string()
+    } else {
+        String::new()
+    };
     let inputs = llm::EnrichInputs {
         vars: &vars,
         context: context.as_deref().unwrap_or(""),

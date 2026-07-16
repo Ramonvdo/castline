@@ -12,20 +12,16 @@ use crate::settings::LlmConfig;
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
-/// Castline's built-in tone of voice for generated text values — used when
-/// neither the profile nor Settings configures one.
-pub const DEFAULT_TONE: &str = "Casual, charismatic, original phrasing. Straight to the point. \
-Never use em dashes (—); use commas or periods instead. No clichés, no corporate filler, no \
-AI-sounding hedging.";
-
-/// Resolve the effective tone: profile override → Settings → built-in default.
+/// Resolve the effective tone: profile override → Settings → none. There is no
+/// hidden built-in fallback — an empty tone means no tone section in the prompt
+/// (Settings merely arrives *prefilled* with a suggestion the user can clear).
 pub fn effective_tone<'a>(profile_tone: &'a str, settings_tone: &'a str) -> &'a str {
     if !profile_tone.trim().is_empty() {
         profile_tone
     } else if !settings_tone.trim().is_empty() {
         settings_tone
     } else {
-        DEFAULT_TONE
+        ""
     }
 }
 
@@ -239,8 +235,8 @@ mod tests {
     fn tone_resolution_order() {
         assert_eq!(effective_tone("per-profile pirate", "settings tone"), "per-profile pirate");
         assert_eq!(effective_tone("  ", "settings tone"), "settings tone");
-        assert_eq!(effective_tone("", ""), DEFAULT_TONE);
-        assert!(DEFAULT_TONE.contains("em dashes"));
+        // No hidden fallback: both empty → no tone at all.
+        assert_eq!(effective_tone("", ""), "");
     }
 
     #[test]
@@ -328,7 +324,7 @@ mod tests {
             &format!("http://{addr}/api/v1/chat/completions"),
             &cfg(),
             r#"{"email":"sam@acme.com"}"#,
-            &inputs(&vars, "extra user context rides along", "", DEFAULT_TONE),
+            &inputs(&vars, "extra user context rides along", "", ""),
         )
         .unwrap();
         let request = handle.join().unwrap();
@@ -368,7 +364,7 @@ mod tests {
         let out = enrich(
             &cfg,
             r#"{"company":"Anthropic PBC","email":"sam@anthropic.com"}"#,
-            &inputs(&vars, "The contact signs their emails as Sam.", "", DEFAULT_TONE),
+            &inputs(&vars, "The contact signs their emails as Sam.", "", ""),
         )
         .expect("live enrich failed");
         println!("live enrich → {out}");

@@ -59,20 +59,29 @@ pub struct LlmConfig {
     /// Append `:online` to the model so OpenRouter runs live web search.
     #[serde(default)]
     pub web_search: bool,
-    /// Tone of voice for generated text values; empty = the built-in default
-    /// (casual, charismatic, no em dashes — see `llm::DEFAULT_TONE`).
-    #[serde(default)]
+    /// Tone of voice for generated text values. Prefilled with a suggested
+    /// default on first run (like the model field) so setup is fast — but it's
+    /// just text: clear it and no tone is applied at all. Only used when the
+    /// enrich dialog's "Tone of voice" checkbox is ticked.
+    #[serde(default = "default_tone")]
     pub tone: String,
 }
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        Self { api_key: String::new(), model: default_model(), web_search: false, tone: String::new() }
+        Self { api_key: String::new(), model: default_model(), web_search: false, tone: default_tone() }
     }
 }
 
 fn default_model() -> String {
     "google/gemini-2.5-flash".into()
+}
+
+/// The suggested starter tone — a prefill, not a fallback.
+pub fn default_tone() -> String {
+    "Casual, charismatic, original phrasing. Straight to the point. Never use em dashes (—); \
+     use commas or periods instead. No clichés, no corporate filler, no AI-sounding hedging."
+        .into()
 }
 
 /// A recurring job: POST all profiles / one item / one folder to a connector,
@@ -338,6 +347,12 @@ mod tests {
         assert!(cfg.llm.api_key.is_empty());
         assert_eq!(cfg.llm.model, "google/gemini-2.5-flash");
         assert!(cfg.autostart);
+        // Tone arrives PREFILLED (a starter suggestion, not a hidden fallback)…
+        assert!(cfg.llm.tone.contains("em dashes"));
+        // …but a deliberately cleared tone stays cleared.
+        let cleared: AppSettings =
+            serde_json::from_str(r#"{ "llm": { "tone": "" } }"#).unwrap();
+        assert!(cleared.llm.tone.is_empty());
     }
 
     #[test]

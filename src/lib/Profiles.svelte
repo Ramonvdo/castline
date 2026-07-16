@@ -307,6 +307,8 @@
   let aiContext = $state("");
   let aiFile = $state(null); // { name, text }
   let aiWeb = $state(false);
+  let aiTone = $state(false); // opt-in: apply the tone of voice
+  let aiLib = $state(false); // opt-in: give the model the library templates
 
   function openAiPanel(p) {
     enrichForId = null;
@@ -314,7 +316,16 @@
     aiContext = "";
     aiFile = null;
     aiWeb = !!(llm && llm.web_search);
+    // Off by default — with nothing ticked the generation stays simple
+    // (values + variable descriptions only).
+    aiTone = false;
+    aiLib = false;
   }
+
+  // What tone WOULD apply if the checkbox is ticked (profile → Settings).
+  let aiToneText = $derived(
+    (aiPanel?.profile?.tone || "").trim() || (llm?.tone || "").trim(),
+  );
   async function attachAiFile() {
     const path = await pickContextFile();
     if (!path) return;
@@ -336,7 +347,7 @@
       ]
         .filter(Boolean)
         .join("\n\n");
-      const body = await llmEnrich(JSON.stringify(p.values), ctx, aiWeb, p.tone || "");
+      const body = await llmEnrich(JSON.stringify(p.values), ctx, aiWeb, p.tone || "", aiTone, aiLib);
       const obj = parseObj(body);
       if (!obj || !Object.keys(obj).length) {
         flash("The AI returned no fields");
@@ -663,10 +674,31 @@
         {:else}
           <button class="ghost sm" onclick={attachAiFile}><Icon name="plus" size={13} /> Attach a .txt / .md file</button>
         {/if}
+      </div>
 
+      <!-- Everything below is opt-in: with nothing ticked the generation stays
+           simple — profile values + variable descriptions only. -->
+      <div class="ai-opts">
         <label class="ai-web" title="OpenRouter :online — works with any model">
           <input type="checkbox" bind:checked={aiWeb} />
           <span>Web research</span>
+        </label>
+        <label
+          class="ai-web"
+          class:off={!aiToneText}
+          title={aiToneText
+            ? `Applies: ${aiToneText.slice(0, 140)}${aiToneText.length > 140 ? "…" : ""}`
+            : "No tone configured — set one in Settings → AI workflow or on this profile"}
+        >
+          <input type="checkbox" bind:checked={aiTone} disabled={!aiToneText} />
+          <span>Tone of voice</span>
+        </label>
+        <label
+          class="ai-web"
+          title="Adds the templates where your variables are used, so generated text fits the sentence around it"
+        >
+          <input type="checkbox" bind:checked={aiLib} />
+          <span>Use library as reference</span>
         </label>
       </div>
 
@@ -1058,6 +1090,14 @@
   .icon-btn.xs {
     padding: 3px;
   }
+  .ai-opts {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--border);
+    padding-top: 11px;
+  }
   .ai-web {
     display: inline-flex;
     align-items: center;
@@ -1066,6 +1106,10 @@
     color: var(--muted);
     cursor: pointer;
     user-select: none;
+  }
+  .ai-web.off {
+    color: var(--faint);
+    cursor: default;
   }
   .ai-actions {
     display: flex;

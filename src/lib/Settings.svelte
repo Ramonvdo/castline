@@ -59,8 +59,6 @@
   let llmModel = $state("google/gemini-2.5-flash");
   let llmWeb = $state(false);
   let llmTone = $state("");
-  const DEFAULT_TONE =
-    "Casual, charismatic, original phrasing. Straight to the point. Never use em dashes (—); use commas or periods instead. No clichés, no corporate filler, no AI-sounding hedging.";
 
   // ── Startup & tray ──
   let autostart = $state(true);
@@ -322,10 +320,10 @@
       <span>Web research — the model searches the web live (OpenRouter <code>:online</code>, works with any model)</span>
     </label>
     <label class="fld">
-      <span>Tone of voice — applies to every text value the AI writes (a profile can override it)</span>
-      <textarea class="field tone" rows="2" bind:value={llmTone} placeholder={DEFAULT_TONE}></textarea>
+      <span>Tone of voice — used only when “Tone of voice” is ticked in the enrich dialog (a profile can override it)</span>
+      <textarea class="field tone" rows="2" bind:value={llmTone} placeholder="Empty = no tone is applied at all"></textarea>
     </label>
-    <p class="hint dim">Leave empty to use Castline's default (shown greyed above): casual, charismatic, straight to the point, never em dashes.</p>
+    <p class="hint dim">Comes prefilled with a starter suggestion so setup is fast — edit it freely, or clear it to apply no tone.</p>
     <div class="row-end">
       <button class="btn" onclick={saveLlm}>Save AI workflow</button>
     </div>

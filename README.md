@@ -123,18 +123,19 @@ Each profile's **Enrich ▾** menu offers three routes: **Castline AI** (structu
 **webhook connector** (your Make/n8n scenario), or **Ask the Agent** (open-ended, in the terminal).
 
 For Castline AI, add an [OpenRouter](https://openrouter.ai/keys) API key in **Settings → AI workflow**
-and pick a model. Choosing **Castline AI** opens a small dialog where you can add **extra context**
-(notes from a call, a LinkedIn blurb), **attach a `.txt`/`.md` file**, and toggle **web research** for
-that run — OpenRouter's `:online` mode works with *any* model, so no separate research model is needed.
-The call sends the profile's current values plus the **variable descriptions** you write in
-**Settings → Variables** — e.g. describing `{{companyName}}` as *"simplified lowercase company name:
-'RocketFarm Studios LLC' → 'rocketfarm'"* makes every enrichment come back in exactly that shape — and
-the **templates where the variables are used**, so generated text (like an icebreaker) reads naturally
-in place. The same descriptions are baked into the agent's `CLAUDE.md`.
+and pick a model. Choosing **Castline AI** opens a small dialog: add **extra context** (notes from a
+call, a LinkedIn blurb), **attach a `.txt`/`.md` file**, and tick any of three opt-ins for that run —
+**Web research** (OpenRouter's `:online` mode, works with *any* model), **Tone of voice**, and **Use
+library as reference** (the templates where your variables live, so generated text fits the sentence
+around it). With nothing ticked the generation stays simple: just the profile's values plus the
+**variable descriptions** you write in **Settings → Variables** — e.g. describing `{{companyName}}` as
+*"simplified lowercase company name: 'RocketFarm Studios LLC' → 'rocketfarm'"* makes every enrichment
+come back in exactly that shape. The same descriptions are baked into the agent's `CLAUDE.md`.
 
-**Tone of voice:** generated text follows Castline's default tone (casual, charismatic, straight to the
-point, never em dashes) unless you customise it in **Settings → AI workflow**; a profile can override it
-with its own tone (e.g. "formal, in Dutch") in the profile editor.
+**Tone of voice:** Settings arrives prefilled with a starter tone (casual, charismatic, straight to the
+point, never em dashes) so setup is fast — it's plain text you can edit or clear (empty = no tone at
+all), and a profile can override it with its own tone (e.g. "formal, in Dutch") in the profile editor.
+It only applies when the enrich dialog's checkbox is ticked.
 
 **Profile-aware everywhere:** with a profile selected in the top bar, card **Copy**/**send** buttons get
 an accent border (variables are filled), **Fill & copy** becomes **Preview** — filled variables glow
