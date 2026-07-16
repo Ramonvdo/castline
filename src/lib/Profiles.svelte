@@ -6,19 +6,24 @@
     profilesSetLayout,
     profileFromJson,
     connectorSend,
+    llmEnrich,
   } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props — `layout` is the GLOBAL variable grouping (splitters + ordering),
   // shared by every profile. Presentation-only: never affects `values`, so
   // webhook / n8n / Make mappings keyed on variable names keep working.
+  // `llmReady` = an OpenRouter key is configured (Settings → AI workflow);
+  // `onAgent(text)` hands an instruction to the Agent tab.
   let {
     profiles = [],
     layout = [],
     folders = [],
     connectors = [],
+    llmReady = false,
     flash,
     onData,
+    onAgent = () => {},
   } = $props();
 
   let editingId = $state(null); // null = list, "" = new, <id> = editing
@@ -33,22 +38,21 @@
   const nextId = () => `s${++sid}`;
 
   function buildSlots(profileValues) {
+    // Only variables that are live: used somewhere in the library right now, or
+    // already holding a value in this profile. Stale layout entries (vars whose
+    // prompts were deleted) keep their stored ordering but don't render.
+    const live = new Set([...allLibraryVars(folders), ...Object.keys(profileValues || {})]);
     const known = new Set();
     const out = [];
     for (const e of layout) {
       if (e.type === "splitter")
         out.push({ _id: nextId(), type: "splitter", label: e.label || "" });
-      else if (e.type === "var" && !known.has(e.name)) {
+      else if (e.type === "var" && live.has(e.name) && !known.has(e.name)) {
         out.push({ _id: "v:" + e.name, type: "var", name: e.name });
         known.add(e.name);
       }
     }
-    for (const n of allLibraryVars(folders))
-      if (!known.has(n)) {
-        out.push({ _id: "v:" + n, type: "var", name: n });
-        known.add(n);
-      }
-    for (const n of Object.keys(profileValues || {}))
+    for (const n of live)
       if (!known.has(n)) {
         out.push({ _id: "v:" + n, type: "var", name: n });
         known.add(n);
@@ -237,6 +241,20 @@
     }
     connBusy = false;
   }
+  // Merge an enrichment result (object of name → value) into a profile.
+  async function mergeEnriched(p, obj, label) {
+    const merged = { ...p.values };
+    for (const [k, v] of Object.entries(obj)) merged[k] = strval(v);
+    const data = await profilesSave({
+      id: p.id,
+      name: p.name,
+      values: merged,
+      source: p.source || "manual",
+    });
+    onData(data);
+    flash(`Enriched “${p.name}” (+${Object.keys(obj).length} fields${label ? ` · ${label}` : ""})`);
+  }
+
   async function enrich(p, c) {
     enrichForId = null;
     enrichBusy = true;
@@ -246,29 +264,86 @@
       if (!obj) {
         flash(`Connector returned no JSON (status ${res.status})`);
       } else {
-        const merged = { ...p.values };
-        for (const [k, v] of Object.entries(obj)) merged[k] = strval(v);
-        const data = await profilesSave({
-          id: p.id,
-          name: p.name,
-          values: merged,
-          source: p.source || "manual",
-        });
-        onData(data);
-        flash(`Enriched “${p.name}” (+${Object.keys(obj).length} fields)`);
+        await mergeEnriched(p, obj, c.name || "webhook");
       }
     } catch (e) {
       flash(String(e));
     }
     enrichBusy = false;
   }
+
+  // "Castline AI": one OpenRouter call fills the library's variables using the
+  // profile's current values + the descriptions from Settings.
+  async function enrichAI(p) {
+    enrichForId = null;
+    enrichBusy = true;
+    flash("Castline AI is researching…");
+    try {
+      const body = await llmEnrich(JSON.stringify(p.values));
+      const obj = parseObj(body);
+      if (!obj || !Object.keys(obj).length) {
+        flash("The AI returned no fields");
+      } else {
+        await mergeEnriched(p, obj, "Castline AI");
+      }
+    } catch (e) {
+      flash(String(e));
+    }
+    enrichBusy = false;
+  }
+
+  // Hand the profile to the Agent tab with a ready-made instruction.
+  function enrichViaAgent(p) {
+    enrichForId = null;
+    onAgent(
+      `Enrich the Castline profile "${p.name}": research the missing variables (see the Variables section in CLAUDE.md) and update it via the local update-profile endpoint. Current values: ${JSON.stringify(p.values)}`,
+    );
+  }
+
+  // ── Send all profiles to a connector (one payload) ──
+  let sendAllOpen = $state(false);
+  async function sendAll(c) {
+    sendAllOpen = false;
+    const payload = {
+      profiles: profiles.map((p) => ({ name: p.name, values: p.values })),
+    };
+    try {
+      const res = await connectorSend(c.url, JSON.stringify(payload));
+      flash(
+        res.status >= 200 && res.status < 300
+          ? `Sent ${profiles.length} profile${profiles.length === 1 ? "" : "s"} → ${c.name || "webhook"}`
+          : `Webhook answered ${res.status}`,
+      );
+    } catch (e) {
+      flash(String(e));
+    }
+  }
 </script>
 
 <div class="view">
   {#if editingId === null}
     <div class="view-head">
-      <h2></h2>
+      <h2>Profiles</h2>
       <div class="head-actions">
+        {#if connectors.length && profiles.length}
+          <div class="enrich-wrap">
+            <button class="ghost" onclick={() => (sendAllOpen = !sendAllOpen)}
+              >Send all ▾</button
+            >
+            {#if sendAllOpen}
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div class="backdrop" onclick={() => (sendAllOpen = false)}></div>
+              <div class="enrich-menu">
+                <div class="emi-label">POST all profiles to</div>
+                {#each connectors as c (c.id)}
+                  <button class="emi" onclick={() => sendAll(c)}
+                    >{c.name || c.url}</button
+                  >
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
         {#if connectors.length}<button
             class="ghost"
             onclick={openConnectorPanel}>New from connector</button
@@ -347,31 +422,48 @@
                 >{p.source}</span
               >{/if}
             <span class="muted">{Object.keys(p.values).length} value(s)</span>
-            {#if connectors.length}
-              <div class="enrich-wrap">
-                <button
-                  class="link"
-                  disabled={enrichBusy}
-                  onclick={() =>
-                    (enrichForId = enrichForId === p.id ? null : p.id)}
-                  >Enrich ▾</button
-                >
-                {#if enrichForId === p.id}
-                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                  <div
-                    class="backdrop"
-                    onclick={() => (enrichForId = null)}
-                  ></div>
-                  <div class="enrich-menu">
+            <div class="enrich-wrap">
+              <button
+                class="link"
+                disabled={enrichBusy}
+                onclick={() =>
+                  (enrichForId = enrichForId === p.id ? null : p.id)}
+                >Enrich ▾</button
+              >
+              {#if enrichForId === p.id}
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <div
+                  class="backdrop"
+                  onclick={() => (enrichForId = null)}
+                ></div>
+                <div class="enrich-menu">
+                  <button
+                    class="emi ai"
+                    disabled={!llmReady}
+                    title={llmReady
+                      ? "One AI call fills the library's variables"
+                      : "Add an OpenRouter key in Settings → AI workflow"}
+                    onclick={() => enrichAI(p)}
+                  >
+                    <Icon name="sparkle" size={13} /> Castline AI{llmReady
+                      ? ""
+                      : " (no API key)"}
+                  </button>
+                  {#if connectors.length}
+                    <div class="emi-label">Webhooks</div>
                     {#each connectors as c (c.id)}
                       <button class="emi" onclick={() => enrich(p, c)}
                         >{c.name || c.url}</button
                       >
                     {/each}
-                  </div>
-                {/if}
-              </div>
-            {/if}
+                  {/if}
+                  <div class="emi-sep"></div>
+                  <button class="emi" onclick={() => enrichViaAgent(p)}>
+                    <Icon name="terminal" size={13} /> Ask the Agent…
+                  </button>
+                </div>
+              {/if}
+            </div>
             <button class="link" onclick={() => editProfile(p)}>Edit</button>
             <button class="link danger" onclick={() => remove(p)}>Delete</button
             >
@@ -461,7 +553,6 @@
     height: 100%;
     overflow-y: auto;
     padding: 22px 26px;
-    max-width: 860px;
   }
   .view-head {
     display: flex;
@@ -574,6 +665,35 @@
   }
   .emi:hover {
     background: var(--elevated);
+  }
+  .emi {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .emi.ai {
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+  .emi:disabled {
+    color: var(--faint);
+    font-weight: 400;
+    cursor: default;
+  }
+  .emi:disabled:hover {
+    background: none;
+  }
+  .emi-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--faint);
+    padding: 6px 9px 2px;
+  }
+  .emi-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 2px;
   }
   .tiny {
     font-size: 12px;

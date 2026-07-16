@@ -9,7 +9,7 @@
   import FillCopy from "./lib/FillCopy.svelte";
   import Icon from "./lib/Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { getLibrary, getProfiles, getSettings, onProfilesChanged, onLibraryChanged } from "./lib/api.js";
+  import { getLibrary, getProfiles, getSettings, onProfilesChanged, onLibraryChanged, onScheduleRan } from "./lib/api.js";
 
   const appWindow = getCurrentWindow();
   const winMinimize = () => appWindow.minimize();
@@ -24,6 +24,13 @@
   let quickOpen = $state(false);
   let fillItem = $state(null);
   let fillMode = $state("auto"); // auto | steps
+
+  // An instruction queued for the Agent tab (e.g. "Enrich → Ask the Agent").
+  let agentPrompt = $state("");
+  function askAgent(text) {
+    agentPrompt = text;
+    view = "agent";
+  }
 
   // Compact / preview mode (persisted).
   let compact = $state(localStorage.getItem("castline-compact") === "1");
@@ -60,6 +67,10 @@
     const unLib = await onLibraryChanged(async () => {
       library = await getLibrary();
     });
+    const unSched = await onScheduleRan(async (msg) => {
+      flash(String(msg));
+      settings = await getSettings(); // pick up the new last_run stamps
+    });
 
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -75,6 +86,7 @@
       window.removeEventListener("keydown", onKey);
       un();
       unLib();
+      unSched();
     };
   });
 
@@ -152,17 +164,17 @@
 
   <main class="body">
     {#if view === "library"}
-      <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} {flash} onFill={openFill} />
+      <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} connectors={settings.connectors || []} {flash} onFill={openFill} />
     {:else if view === "profiles"}
-      <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} connectors={settings.connectors || []} {flash} onData={(d) => (profiles = d)} />
+      <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} connectors={settings.connectors || []} llmReady={!!(settings.llm && settings.llm.api_key)} {flash} onData={(d) => (profiles = d)} onAgent={askAgent} />
     {:else if view === "connectors"}
       <Connectors connectors={settings.connectors || []} folders={library.folders} {flash} onSettings={(s) => (settings = s)} />
     {:else if view === "settings"}
-      <Settings {flash} onLibraryData={(d) => (library = d)} onProfilesData={(d) => (profiles = d)} />
+      <Settings {flash} folders={library.folders} connectors={settings.connectors || []} onLibraryData={(d) => (library = d)} onProfilesData={(d) => (profiles = d)} onSettings={(s) => (settings = s)} />
     {/if}
     <!-- Agent stays mounted so the terminal survives tab switches -->
     <div class="agent-wrap" style:display={view === "agent" ? "block" : "none"}>
-      <Agent active={view === "agent"} />
+      <Agent active={view === "agent"} pending={agentPrompt} onPendingSent={() => (agentPrompt = "")} />
     </div>
   </main>
 </div>
@@ -170,11 +182,11 @@
 {#if toast}<div class="toast">{toast}</div>{/if}
 
 {#if quickOpen}
-  <QuickOpen {library} {activeProfile} {flash} onFill={openFill} onClose={() => (quickOpen = false)} />
+  <QuickOpen {library} {activeProfile} {flash} onFill={openFill} onClose={() => (quickOpen = false)} onUsed={(d) => (library = d)} />
 {/if}
 
 {#if fillItem}
-  <FillCopy item={fillItem} mode={fillMode} profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {flash} onClose={() => (fillItem = null)} />
+  <FillCopy item={fillItem} mode={fillMode} profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {flash} onClose={() => (fillItem = null)} onUsed={(d) => (library = d)} />
 {/if}
 
 <style>

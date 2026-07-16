@@ -19,7 +19,10 @@
   } from "./api.js";
   import Icon from "./Icon.svelte";
 
-  let { active = false } = $props();
+  // `pending` = an instruction queued from elsewhere (e.g. Profiles → Enrich →
+  // Ask the Agent). Typed into the terminal once claude is running; the user
+  // reviews it and presses Enter.
+  let { active = false, pending = "", onPendingSent = () => {} } = $props();
 
   let host; // terminal container (bind:this)
   let term, fit, ro, offOut, offExit;
@@ -102,6 +105,19 @@
           start();
         }
       });
+    }
+  });
+
+  // Type a queued instruction into the terminal once claude is up. No trailing
+  // newline — the user reviews it and presses Enter themselves.
+  $effect(() => {
+    if (pending && running) {
+      const text = pending;
+      onPendingSent();
+      setTimeout(() => {
+        aiInput(text).catch(() => {});
+        term?.focus();
+      }, 900);
     }
   });
 

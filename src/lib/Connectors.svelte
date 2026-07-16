@@ -386,7 +386,9 @@
     height: 100%;
     overflow-y: auto;
     padding: 22px 26px;
-    max-width: 820px;
+  }
+  .sub {
+    max-width: 82ch;
   }
   .view-head {
     display: flex;

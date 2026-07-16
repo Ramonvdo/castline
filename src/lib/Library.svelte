@@ -11,7 +11,9 @@
     libDeleteItem,
     libMoveItem,
     libToggleFavorite,
+    libRecordUse,
     clipCopy,
+    connectorSend,
     pickSaveDoc,
     saveTextFile,
   } from "./api.js";
@@ -27,6 +29,7 @@
     layout = [],
     activeProfile = null,
     compact = false,
+    connectors = [],
     flash,
     onFill,
   } = $props();
@@ -93,6 +96,14 @@
         (i.tags || []).some((t) => selectedTags.includes(t)),
       );
     }
+    // "Most used" sorts by copy count wherever you are (presentation only).
+    if (sortMode === "used") {
+      return [...list].sort(
+        (a, b) =>
+          (b.item.uses || 0) - (a.item.uses || 0) ||
+          a.item.name.localeCompare(b.item.name),
+      );
+    }
     // A real folder keeps its manual (stored) order so drag-reorder is honoured;
     // the All / Favorites views sort favourites-first then by name.
     if (isVirtual) {
@@ -104,6 +115,9 @@
     }
     return list;
   });
+
+  // "manual" honours stored/drag order; "used" surfaces the most-copied items.
+  let sortMode = $state("manual");
 
   function toggleTag(t) {
     selectedTags = selectedTags.includes(t)
@@ -396,9 +410,10 @@
     library = await libToggleFavorite(folderId, item.id);
   }
   // Copy an item; if a profile is active in the top bar, fill its {{variables}}.
+  // {{today}}/{{now}} tokens always resolve, profile or not.
   async function copyItem(item) {
     const raw = itemPlainText(item);
-    const text = activeProfile ? applyVars(raw, activeProfile.values) : raw;
+    const text = applyVars(raw, activeProfile?.values || {});
     const ok = await clipCopy(text);
     flash(
       ok
@@ -407,6 +422,41 @@
           : "Copied"
         : "Copy failed",
     );
+    if (ok) library = await libRecordUse(item.id);
+  }
+
+  // Duplicate an item into its folder (blank id → upsert creates a copy).
+  async function duplicateItem(folderId, item) {
+    const copy = JSON.parse(JSON.stringify(item));
+    copy.id = "";
+    copy.name = `${item.name} (copy)`;
+    copy.uses = 0;
+    copy.favorite = false;
+    for (const s of copy.steps || []) s.id = "";
+    library = await libSaveItem(folderId, copy);
+    flash("Item duplicated");
+  }
+
+  // POST one item to an outbound connector (raw text — mapping lives in Make/n8n).
+  async function sendItemTo(item, c) {
+    const payload = {
+      name: item.name,
+      type: item.item_type || "",
+      kind: item.kind,
+      tags: item.tags || [],
+      text: itemPlainText(item),
+      steps: (item.steps || []).map((s) => ({ title: s.title, text: s.text })),
+    };
+    try {
+      const res = await connectorSend(c.url, JSON.stringify(payload));
+      flash(
+        res.status >= 200 && res.status < 300
+          ? `Sent “${item.name}” → ${c.name || "webhook"}`
+          : `Webhook answered ${res.status}`,
+      );
+    } catch (e) {
+      flash(String(e));
+    }
   }
 
   // ── Multi-select (Ctrl/Cmd+click) — ordered, so selection order == copy order ──
@@ -605,6 +655,10 @@
           bind:value={search}
         />
       </div>
+      <select class="sortsel" bind:value={sortMode} title="Sort items">
+        <option value="manual">Manual order</option>
+        <option value="used">Most used</option>
+      </select>
       <button class="btn with-ic" onclick={openNewItem}
         ><Icon name="plus" size={15} /> New item</button
       >
@@ -686,19 +740,18 @@
           >
             {#if pos >= 0}<span class="selnum">{pos + 1}</span>{/if}
 
-            <!-- Type marker in the corner (SOP shows its step count). -->
+            <!-- Corner: pin + how often this item has been copied. -->
             <span
               class="type-corner"
-              title={item.kind === "sop"
-                ? `SOP · ${item.steps.length} steps`
-                : "Template"}
+              title={item.uses
+                ? `Copied ${item.uses} time${item.uses === 1 ? "" : "s"}`
+                : "Not copied yet"}
             >
               {#if item.favorite}<span class="fav-mark"
                   ><Icon name="star" size={12} fill={true} /></span
                 >{/if}
-              <Icon name={item.kind === "sop" ? "sop" : "template"} size={13} />
-              {#if item.kind === "sop"}<span class="tc-n"
-                  >{item.steps.length}</span
+              {#if item.uses}<span class="tc-n uses"
+                  ><Icon name="copy" size={11} />{item.uses}</span
                 >{/if}
             </span>
 
@@ -726,7 +779,14 @@
               >
             </div>
 
-            <div class="name" title={item.name}>{item.name}</div>
+            <div class="name" title={item.name}>
+              {item.name}
+              {#if item.kind === "sop"}<span
+                  class="sop-badge"
+                  title={`SOP · ${item.steps.length} steps`}
+                  ><Icon name="sop" size={11} />{item.steps.length}</span
+                >{/if}
+            </div>
 
             {#if !compact}
               {#if isVirtual}
@@ -1106,12 +1166,38 @@
       onclick={() => {
         const m = itemMenu;
         itemMenu = null;
+        duplicateItem(m.folderId, m.item);
+      }}
+    >
+      <Icon name="layers" size={14} /> Duplicate
+    </button>
+    <button
+      class="ctx-item"
+      onclick={() => {
+        const m = itemMenu;
+        itemMenu = null;
         toggleFav(m.folderId, m.item);
       }}
     >
       <Icon name="star" size={14} fill={itemMenu.item.favorite} />
       {itemMenu.item.favorite ? "Unpin" : "Pin"}
     </button>
+    {#if connectors.length}
+      <div class="ctx-sep"></div>
+      <div class="ctx-label"><Icon name="plug" size={12} /> Send to webhook</div>
+      {#each connectors as c (c.id)}
+        <button
+          class="ctx-item sub"
+          onclick={() => {
+            const m = itemMenu;
+            itemMenu = null;
+            sendItemTo(m.item, c);
+          }}
+        >
+          {c.name || c.url}
+        </button>
+      {/each}
+    {/if}
     <div class="ctx-sep"></div>
     <button
       class="ctx-item danger"
@@ -1193,6 +1279,23 @@
     height: 1px;
     background: var(--border);
     margin: 4px 2px;
+  }
+  .ctx-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--faint);
+    padding: 5px 10px 2px;
+  }
+  .ctx-item.sub {
+    padding-left: 26px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
   }
   .modal.confirm {
     max-width: 380px;
@@ -1368,6 +1471,19 @@
     gap: 10px;
     align-items: center;
     margin-bottom: 14px;
+  }
+  .sortsel {
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-size: 13px;
+    padding: 9px 10px;
+    cursor: pointer;
+  }
+  .sortsel:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
   }
   .search-wrap {
     flex: 1;
@@ -1691,6 +1807,26 @@
     color: var(--muted);
     font-family: var(--font-mono);
     font-size: 10.5px;
+  }
+  .tc-n.uses {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .sop-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    vertical-align: 1px;
+    margin-left: 6px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 5px;
+    background: var(--elevated);
   }
 
   /* Hover actions on a dark corner-piece */

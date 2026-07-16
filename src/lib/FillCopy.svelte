@@ -1,13 +1,21 @@
 <script>
   import { extractVars, applyVars, itemVars, groupVarsByLayout } from "./vars.js";
-  import { clipCopy } from "./api.js";
+  import { clipCopy, libRecordUse } from "./api.js";
 
   // props
-  let { item, mode = "auto", profiles = [], layout = [], activeProfile = null, flash, onClose } = $props();
+  let { item, mode = "auto", profiles = [], layout = [], activeProfile = null, flash, onClose, onUsed = () => {} } = $props();
 
   let values = $state({});
   let stepIdx = $state(0);
   let profileId = $state("");
+
+  // Count the item as "used" once per fill session, on the first real copy.
+  let counted = false;
+  function countUse() {
+    if (counted || !item) return;
+    counted = true;
+    libRecordUse(item.id).then(onUsed).catch(() => {});
+  }
 
   // Seed keys; prefill from the active profile (or a picked one) where present.
   $effect(() => {
@@ -63,6 +71,7 @@
       flash("Copy failed");
       return;
     }
+    countUse();
     if (isSop) {
       if (isLastStep) {
         flash(`Copied step ${stepIdx + 1} · done`);
@@ -80,7 +89,10 @@
     const text = (item.steps || []).map((s) => applyVars(s.text, values)).join("\n\n");
     const ok = await clipCopy(text);
     flash(ok ? "Copied all steps" : "Copy failed");
-    if (ok) onClose();
+    if (ok) {
+      countUse();
+      onClose();
+    }
   }
   function next() {
     if (isSop && stepIdx < item.steps.length - 1) stepIdx += 1;

@@ -4,22 +4,68 @@
 
 export const VAR_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
-/** Ordered, de-duplicated list of {{variables}} found in `text`. */
+// ── Auto date/time tokens — {{today}}, {{now}}, with Make-style formats:
+// {{today:YYYY-MM-DD}}, {{now:HH:mm}}, {{today:MMM D, YYYY}} …
+// Resolved at copy time; never shown as fill fields or profile variables.
+
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+/** Is this variable an auto-filled date/time token? */
+export function isAutoVar(name) {
+  const head = (name || "").split(":")[0].trim().toLowerCase();
+  return head === "today" || head === "now";
+}
+
+/** Format `d` with YYYY YY MMMM MMM MM M DD D HH mm ss tokens (Make-style). */
+export function formatDate(d, fmt) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const map = {
+    YYYY: String(d.getFullYear()),
+    YY: String(d.getFullYear()).slice(-2),
+    MMMM: MONTHS[d.getMonth()],
+    MMM: MONTHS[d.getMonth()].slice(0, 3),
+    MM: pad(d.getMonth() + 1),
+    M: String(d.getMonth() + 1),
+    DD: pad(d.getDate()),
+    D: String(d.getDate()),
+    HH: pad(d.getHours()),
+    mm: pad(d.getMinutes()),
+    ss: pad(d.getSeconds()),
+  };
+  return fmt.replace(/YYYY|YY|MMMM|MMM|MM|M|DD|D|HH|mm|ss/g, (t) => map[t]);
+}
+
+/** Resolve an auto token ("today", "now:HH:mm") to its formatted value. */
+function autoValue(name, now = new Date()) {
+  const idx = name.indexOf(":");
+  const head = (idx === -1 ? name : name.slice(0, idx)).trim().toLowerCase();
+  const fmt = idx === -1 ? "" : name.slice(idx + 1).trim();
+  if (head === "today") return formatDate(now, fmt || "YYYY-MM-DD");
+  if (head === "now") return formatDate(now, fmt || "HH:mm");
+  return null;
+}
+
+/** Ordered, de-duplicated list of {{variables}} found in `text` (auto tokens excluded). */
 export function extractVars(text) {
   const seen = [];
   let m;
   VAR_RE.lastIndex = 0;
   while ((m = VAR_RE.exec(text || "")) !== null) {
     const name = m[1].trim();
-    if (name && !seen.includes(name)) seen.push(name);
+    if (name && !isAutoVar(name) && !seen.includes(name)) seen.push(name);
   }
   return seen;
 }
 
-/** Replace {{name}} with values[name]; leave untouched when there's no value. */
+/**
+ * Replace {{name}} with values[name]; leave untouched when there's no value.
+ * {{today}}/{{now}} (with optional :format) always resolve, profile or not.
+ */
 export function applyVars(text, values) {
   return (text || "").replace(VAR_RE, (full, name) => {
-    const v = values[name.trim()];
+    const n = name.trim();
+    if (isAutoVar(n)) return autoValue(n) ?? full;
+    const v = (values || {})[n];
     return v !== undefined && v !== "" ? v : full;
   });
 }

@@ -51,6 +51,9 @@ pub struct LibItem {
     pub tags: Vec<String>,
     #[serde(default)]
     pub favorite: bool,
+    /// How many times this item has been copied (drives the "Most used" sort).
+    #[serde(default)]
+    pub uses: u64,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]
@@ -104,6 +107,7 @@ impl Default for LibraryData {
                         steps: vec![],
                         tags: vec!["copywriting".into(), "email".into()],
                         favorite: false,
+                        uses: 0,
                         created_at: now_iso(),
                         updated_at: now_iso(),
                     },
@@ -139,6 +143,7 @@ impl Default for LibraryData {
                         ],
                         tags: vec!["content".into(), "workflow".into()],
                         favorite: false,
+                        uses: 0,
                         created_at: now_iso(),
                         updated_at: now_iso(),
                     },
@@ -336,6 +341,63 @@ pub fn toggle_favorite(data: &mut LibraryData, folder_id: &str, item_id: &str) {
     }
 }
 
+/// Bump an item's use counter (searched across all folders). Returns whether
+/// the item was found.
+pub fn record_use(data: &mut LibraryData, item_id: &str) -> bool {
+    for folder in &mut data.folders {
+        if let Some(item) = folder.items.iter_mut().find(|i| i.id == item_id) {
+            item.uses = item.uses.saturating_add(1);
+            return true;
+        }
+    }
+    false
+}
+
+/// Find an item anywhere in the library (used by the webhook scheduler).
+pub fn find_item(data: &LibraryData, item_id: &str) -> Option<LibItem> {
+    data.folders.iter().flat_map(|f| f.items.iter()).find(|i| i.id == item_id).cloned()
+}
+
+/// True for the auto-filled date/time tokens (`{{today}}`, `{{now:HH:mm}}`) —
+/// they're resolved at copy time and are not real profile variables.
+fn is_auto_var(name: &str) -> bool {
+    let head = name.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
+    head == "today" || head == "now"
+}
+
+/// Every `{{variable}}` used anywhere across all folders/items, in first-seen
+/// order, auto tokens excluded. The Rust twin of the frontend's
+/// `allLibraryVars` — used for the agent's CLAUDE.md and the LLM enrich prompt.
+pub fn all_vars(data: &LibraryData) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut scan = |text: &str| {
+        let mut rest = text;
+        while let Some(start) = rest.find("{{") {
+            let after = &rest[start + 2..];
+            let Some(end) = after.find("}}") else { break };
+            let name = after[..end].trim();
+            if !name.is_empty()
+                && !name.contains('{')
+                && !name.contains('}')
+                && !is_auto_var(name)
+                && !out.iter().any(|v| v == name)
+            {
+                out.push(name.to_string());
+            }
+            rest = &after[end + 2..];
+        }
+    };
+    for folder in &data.folders {
+        for item in &folder.items {
+            scan(&item.text);
+            for step in &item.steps {
+                scan(&step.text);
+            }
+        }
+    }
+    out
+}
+
 /// Merge an imported library into the current one: append every folder with a
 /// fresh id (and fresh item/step ids) so nothing collides or overwrites.
 pub fn merge_import(data: &mut LibraryData, imported: LibraryData) {
@@ -367,6 +429,7 @@ mod tests {
             steps: vec![],
             tags: vec![],
             favorite: false,
+            uses: 0,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -461,6 +524,59 @@ mod tests {
         assert!(d.folders.iter().all(|f| f.id != incoming_id));
         assert!(d.folders.iter().any(|f| f.id == existing_id));
         assert!(d.folders.iter().any(|f| f.name == "Imported"));
+    }
+
+    #[test]
+    fn all_vars_dedupes_and_skips_auto_tokens() {
+        let mut d = LibraryData { folders: vec![] };
+        create_folder(&mut d, "F");
+        let fid = d.folders[0].id.clone();
+        let mut a = blank_item("A"); // text: "hello {{x}}"
+        a.text = "hi {{firstName}} of {{company}}, today is {{today:YYYY-MM-DD}}".into();
+        upsert_item(&mut d, &fid, a);
+        let mut b = blank_item("B");
+        b.kind = "sop".into();
+        b.text = String::new();
+        b.steps = vec![
+            SopStep { id: String::new(), title: "1".into(), text: "re {{company}} at {{ now }}".into() },
+            SopStep { id: String::new(), title: "2".into(), text: "{{topic}} and {{}} broken".into() },
+        ];
+        upsert_item(&mut d, &fid, b);
+
+        assert_eq!(all_vars(&d), vec!["firstName", "company", "topic"]);
+    }
+
+    #[test]
+    fn record_use_bumps_and_persists_zero_default() {
+        let mut d = LibraryData { folders: vec![] };
+        create_folder(&mut d, "F");
+        let fid = d.folders[0].id.clone();
+        upsert_item(&mut d, &fid, blank_item("A"));
+        let iid = d.folders[0].items[0].id.clone();
+
+        assert!(record_use(&mut d, &iid));
+        assert!(record_use(&mut d, &iid));
+        assert_eq!(d.folders[0].items[0].uses, 2);
+        assert!(!record_use(&mut d, "missing"));
+
+        // Old files without `uses` still load (serde default 0).
+        let old: LibItem = serde_json::from_str(
+            r#"{ "id": "i", "name": "n", "kind": "template", "text": "t" }"#,
+        )
+        .unwrap();
+        assert_eq!(old.uses, 0);
+    }
+
+    #[test]
+    fn find_item_searches_all_folders() {
+        let mut d = LibraryData { folders: vec![] };
+        create_folder(&mut d, "A");
+        create_folder(&mut d, "B");
+        let b = d.folders[1].id.clone();
+        upsert_item(&mut d, &b, blank_item("wanted"));
+        let iid = d.folders[1].items[0].id.clone();
+        assert_eq!(find_item(&d, &iid).unwrap().name, "wanted");
+        assert!(find_item(&d, "nope").is_none());
     }
 
     #[test]

@@ -48,6 +48,84 @@ pub struct AiConfig {
     pub extra_args: Vec<String>,
 }
 
+/// The "Castline AI" enrich workflow — one OpenRouter call that fills profile
+/// variables (optionally with live web research via the `:online` suffix).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_model")]
+    pub model: String,
+    /// Append `:online` to the model so OpenRouter runs live web search.
+    #[serde(default)]
+    pub web_search: bool,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self { api_key: String::new(), model: default_model(), web_search: false }
+    }
+}
+
+fn default_model() -> String {
+    "google/gemini-2.5-flash".into()
+}
+
+/// A recurring outbound send: POST all profiles (or one library item) to a
+/// connector every day/week/month. Runs while the app is open; overdue
+/// schedules fire on launch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Schedule {
+    #[serde(default)]
+    pub id: String,
+    /// "profiles" (all profiles) | "item" (one library item).
+    #[serde(default = "default_schedule_kind")]
+    pub kind: String,
+    /// The library item to send when `kind == "item"`.
+    #[serde(default)]
+    pub item_id: String,
+    /// Which connector receives the payload.
+    #[serde(default)]
+    pub connector_id: String,
+    /// "day" | "week" | "month".
+    #[serde(default = "default_every")]
+    pub every: String,
+    /// Unix seconds of the last successful run (0 = never).
+    #[serde(default)]
+    pub last_run: i64,
+}
+
+fn default_schedule_kind() -> String {
+    "profiles".into()
+}
+fn default_every() -> String {
+    "week".into()
+}
+
+/// Seconds between runs for a schedule's `every` value.
+pub fn every_secs(every: &str) -> i64 {
+    match every {
+        "day" => 86_400,
+        "month" => 30 * 86_400,
+        _ => 7 * 86_400, // week (default)
+    }
+}
+
+/// Whether a schedule is due at `now` (unix secs). Never-run schedules are due
+/// immediately so a fresh schedule sends right away and then settles into cadence.
+pub fn schedule_due(s: &Schedule, now: i64) -> bool {
+    now - s.last_run >= every_secs(&s.every)
+}
+
+/// Give every schedule a stable id (called whenever schedules are saved).
+pub fn normalize_schedules(schedules: &mut [Schedule]) {
+    for s in schedules.iter_mut() {
+        if s.id.trim().is_empty() {
+            s.id = gen_id();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     /// Reserved for forward-compat; Castline ships one fixed dark theme.
@@ -59,6 +137,10 @@ pub struct AppSettings {
     pub http: HttpConfig,
     #[serde(default)]
     pub ai: AiConfig,
+    #[serde(default)]
+    pub llm: LlmConfig,
+    #[serde(default)]
+    pub schedules: Vec<Schedule>,
 }
 
 impl Default for AppSettings {
@@ -68,6 +150,8 @@ impl Default for AppSettings {
             connectors: Vec::new(),
             http: HttpConfig::default(),
             ai: AiConfig::default(),
+            llm: LlmConfig::default(),
+            schedules: Vec::new(),
         }
     }
 }
@@ -174,6 +258,37 @@ mod tests {
         assert_eq!(s.http.port, 8787);
         assert!(s.http.token.is_empty());
         assert!(s.ai.claude_path.is_empty());
+    }
+
+    #[test]
+    fn schedule_due_logic() {
+        let mut s = Schedule {
+            id: "s1".into(),
+            kind: "profiles".into(),
+            item_id: String::new(),
+            connector_id: "c1".into(),
+            every: "day".into(),
+            last_run: 0,
+        };
+        // Never run (last_run = 0) → due immediately at any real clock time.
+        let now = 1_700_000_000;
+        assert!(schedule_due(&s, now));
+        // Ran 1h ago on a daily cadence → not due.
+        s.last_run = now;
+        assert!(!schedule_due(&s, now + 3_600));
+        // 25h ago → due.
+        assert!(schedule_due(&s, now + 25 * 3_600));
+        // Weekly default for unknown values.
+        s.every = "fortnight".into();
+        assert!(!schedule_due(&s, now + 6 * 86_400));
+        assert!(schedule_due(&s, now + 8 * 86_400));
+
+        // Old settings without llm/schedules load cleanly.
+        let json = r#"{ "theme": "dark" }"#;
+        let cfg: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(cfg.schedules.is_empty());
+        assert!(cfg.llm.api_key.is_empty());
+        assert_eq!(cfg.llm.model, "google/gemini-2.5-flash");
     }
 
     #[test]

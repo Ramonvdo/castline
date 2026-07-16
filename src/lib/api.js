@@ -20,12 +20,15 @@ export const libMoveItem = (fromFolderId, toFolderId, itemId) =>
 export const libToggleFavorite = (folderId, itemId) =>
   invoke("lib_toggle_favorite", { folderId, itemId });
 export const libReorderItems = (folderId, ids) => invoke("lib_reorder_items", { folderId, ids });
+export const libRecordUse = (itemId) => invoke("lib_record_use", { itemId });
 
 // ── Profiles (separate store) ──
 export const getProfiles = () => invoke("profiles_get_data");
 export const profilesSave = (profile) => invoke("profiles_save", { profile });
 export const profilesDelete = (id) => invoke("profiles_delete", { id });
 export const profilesSetLayout = (layout) => invoke("profiles_set_layout", { layout });
+export const profilesSetDescriptions = (descriptions) =>
+  invoke("profiles_set_descriptions", { descriptions });
 export const profileFromJson = (jsonText) => invoke("profile_from_json", { jsonText });
 
 // ── Clipboard ──
@@ -40,6 +43,15 @@ export const connectorSend = (url, bodyJson) => invoke("connector_send", { url, 
 // ── Inbound HTTP endpoint (Make/n8n HTTP module → profile) ──
 export const httpStatus = () => invoke("http_status");
 export const setHttpEndpoint = (enabled, port) => invoke("set_http_endpoint", { enabled, port });
+
+// ── Castline AI (OpenRouter enrich workflow) ──
+export const llmEnrich = (valuesJson) => invoke("llm_enrich", { values: valuesJson });
+export const setLlmConfig = (apiKey, model, webSearch) =>
+  invoke("set_llm_config", { apiKey, model, webSearch });
+
+// ── Scheduled outbound webhooks ──
+export const setSchedules = (schedules) => invoke("set_schedules", { schedules });
+export const runScheduleNow = (id) => invoke("run_schedule_now", { id });
 
 // ── Import / export / reveal ──
 export const getDataDir = () => invoke("get_data_dir");
@@ -63,6 +75,7 @@ export const setAiConfig = (claudePath, extraArgs) => invoke("set_ai_config", { 
 // ── Live events from the Rust side ──
 export const onProfilesChanged = (cb) => listen("profiles-changed", (e) => cb(e.payload));
 export const onLibraryChanged = (cb) => listen("library-changed", (e) => cb(e.payload));
+export const onScheduleRan = (cb) => listen("schedule-ran", (e) => cb(e.payload));
 export const onAiOutput = (cb) => listen("ai-output", (e) => cb(e.payload));
 export const onAiExit = (cb) => listen("ai-exit", (e) => cb(e.payload));
 

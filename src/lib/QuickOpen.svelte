@@ -1,10 +1,10 @@
 <script>
   import { itemVars, itemPlainText, applyVars } from "./vars.js";
-  import { clipCopy } from "./api.js";
+  import { clipCopy, libRecordUse } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props
-  let { library, activeProfile = null, flash, onFill, onClose } = $props();
+  let { library, activeProfile = null, flash, onFill, onClose, onUsed = () => {} } = $props();
 
   let query = $state("");
   let active = $state(0);
@@ -70,9 +70,10 @@
       return;
     }
     const raw = itemPlainText(item);
-    const text = activeProfile ? applyVars(raw, activeProfile.values) : raw;
+    const text = applyVars(raw, activeProfile?.values || {});
     const ok = await clipCopy(text);
     flash(ok ? `Copied “${item.name}”${activeProfile ? " · " + activeProfile.name : ""}` : "Copy failed");
+    if (ok) libRecordUse(item.id).then(onUsed).catch(() => {});
     onClose();
   }
 

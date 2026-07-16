@@ -51,6 +51,10 @@ pub struct ProfilesData {
     /// Global grouping of variables shared by every profile + the Fill panel.
     #[serde(default)]
     pub layout: Vec<LayoutEntry>,
+    /// Per-variable descriptions — context for the AI enrich workflow and the
+    /// agent's CLAUDE.md (what each `{{variable}}` should contain, with examples).
+    #[serde(default)]
+    pub descriptions: BTreeMap<String, String>,
 }
 
 /// Tauri-managed live profiles + the JSON path it persists to.
@@ -143,6 +147,12 @@ pub fn enrich_existing(data: &mut ProfilesData, incoming: &Profile) -> Option<St
 /// Replace the global variable layout (presentation only — never touches values).
 pub fn set_layout(data: &mut ProfilesData, layout: Vec<LayoutEntry>) {
     data.layout = layout;
+}
+
+/// Replace the per-variable descriptions (empty descriptions are dropped).
+pub fn set_descriptions(data: &mut ProfilesData, descriptions: BTreeMap<String, String>) {
+    data.descriptions =
+        descriptions.into_iter().filter(|(_, v)| !v.trim().is_empty()).collect();
 }
 
 /// Merge imported profiles by appending each with a fresh id.
@@ -257,5 +267,26 @@ mod tests {
         let json = r#"{ "profiles": [] }"#;
         let d: ProfilesData = serde_json::from_str(json).unwrap();
         assert!(d.layout.is_empty());
+        assert!(d.descriptions.is_empty());
+    }
+
+    #[test]
+    fn descriptions_roundtrip_and_survive_upserts() {
+        let mut d = ProfilesData::default();
+        let mut desc = BTreeMap::new();
+        desc.insert("companyName".into(), "abbreviated lowercase company name".into());
+        desc.insert("blanky".into(), "   ".into()); // dropped
+        set_descriptions(&mut d, desc);
+        assert_eq!(d.descriptions.len(), 1);
+
+        upsert_profile(&mut d, profile("Sam", &[("companyName", "rocketfarm")]));
+        assert_eq!(
+            d.descriptions.get("companyName").unwrap(),
+            "abbreviated lowercase company name"
+        );
+
+        let json = serde_json::to_string(&d).unwrap();
+        let back: ProfilesData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.descriptions.len(), 1);
     }
 }

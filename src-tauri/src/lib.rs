@@ -7,6 +7,8 @@ mod connectors;
 mod receiver;
 mod ai;
 mod agent;
+mod llm;
+mod scheduler;
 
 use std::path::Path;
 
@@ -98,6 +100,14 @@ fn lib_reorder_items(app: AppHandle, folder_id: String, ids: Vec<String>) -> Lib
     with_library(&app, |d| library::reorder_items(d, &folder_id, &ids))
 }
 
+/// Bump an item's copy counter (drives the "Most used" sort).
+#[tauri::command]
+fn lib_record_use(app: AppHandle, item_id: String) -> LibraryData {
+    with_library(&app, |d| {
+        library::record_use(d, &item_id);
+    })
+}
+
 // ─── Profile commands ────────────────────────────────────────────────────────
 
 fn with_profiles<F: FnOnce(&mut ProfilesData)>(app: &AppHandle, f: F) -> ProfilesData {
@@ -132,6 +142,15 @@ fn profiles_set_layout(app: AppHandle, layout: Vec<profiles::LayoutEntry>) -> Pr
     with_profiles(&app, |d| profiles::set_layout(d, layout))
 }
 
+/// Replace the per-variable descriptions (AI context, edited in Settings).
+#[tauri::command]
+fn profiles_set_descriptions(
+    app: AppHandle,
+    descriptions: std::collections::BTreeMap<String, String>,
+) -> ProfilesData {
+    with_profiles(&app, |d| profiles::set_descriptions(d, descriptions))
+}
+
 /// Paste-importer: build a profile from a raw JSON string (every key passes
 /// through as a variable of the same name).
 #[tauri::command]
@@ -148,6 +167,72 @@ fn profile_from_json(app: AppHandle, json_text: String) -> Result<ProfilesData, 
 #[tauri::command]
 fn connector_send(url: String, body: String) -> Result<connectors::ConnectorResult, String> {
     connectors::connector_send(&url, &body)
+}
+
+/// Every library variable paired with its user-written description ("" if none)
+/// — the context handed to both the LLM enrich call and the agent's CLAUDE.md.
+fn variable_docs(app: &AppHandle) -> Vec<(String, String)> {
+    let vars = {
+        let state = app.state::<LibraryState>();
+        let data = state.data.lock().unwrap();
+        library::all_vars(&data)
+    };
+    let descriptions = {
+        let state = app.state::<ProfilesState>();
+        let out = state.data.lock().unwrap().descriptions.clone();
+        out
+    };
+    vars.into_iter()
+        .map(|v| {
+            let d = descriptions.get(&v).cloned().unwrap_or_default();
+            (v, d)
+        })
+        .collect()
+}
+
+/// "Castline AI" enrich: one OpenRouter call that fills the library's variables
+/// for the given profile values. Returns a JSON object string (name → value).
+#[tauri::command]
+fn llm_enrich(app: AppHandle, values: String) -> Result<String, String> {
+    let cfg = app.state::<SettingsState>().snapshot().llm;
+    let vars = variable_docs(&app);
+    llm::enrich(&cfg, &values, &vars)
+}
+
+/// Save the AI-workflow settings (OpenRouter key / model / web research).
+#[tauri::command]
+fn set_llm_config(app: AppHandle, api_key: String, model: String, web_search: bool) -> AppSettings {
+    let state = app.state::<SettingsState>();
+    {
+        let mut s = state.data.lock().unwrap();
+        s.llm.api_key = api_key.trim().to_string();
+        s.llm.model = model.trim().to_string();
+        s.llm.web_search = web_search;
+    }
+    state.save();
+    state.snapshot()
+}
+
+// ─── Scheduled outbound webhooks ─────────────────────────────────────────────
+
+/// Persist the schedule list (giving each entry a stable id).
+#[tauri::command]
+fn set_schedules(app: AppHandle, schedules: Vec<settings::Schedule>) -> AppSettings {
+    let state = app.state::<SettingsState>();
+    {
+        let mut s = state.data.lock().unwrap();
+        let mut list = schedules;
+        settings::normalize_schedules(&mut list);
+        s.schedules = list;
+    }
+    state.save();
+    state.snapshot()
+}
+
+/// Fire one schedule immediately (the "Run now" button).
+#[tauri::command]
+fn run_schedule_now(app: AppHandle, id: String) -> Result<String, String> {
+    scheduler::run_schedule(&app, &id)
 }
 
 // ─── Clipboard ───────────────────────────────────────────────────────────────
@@ -248,6 +333,7 @@ fn write_agent_context(app: &AppHandle) {
         base_url: format!("http://127.0.0.1:{}", http.port),
         token: http.token.clone(),
         endpoint_on: http.enabled && active,
+        variables: variable_docs(app),
     };
     let _ = agent::write_claude_md(&root, &ctx);
     let _ = agent::ensure_memory_md(&root);
@@ -505,6 +591,8 @@ pub fn run() {
             }
             // Live-reload the JSON stores when they change on disk.
             spawn_store_watcher(handle.clone());
+            // Scheduled outbound webhooks (60s ticker; overdue fire on launch).
+            scheduler::spawn(handle.clone());
             // Fixed window border colour instead of the system accent.
             if let Some(win) = handle.get_webview_window("main") {
                 set_window_border(&win);
@@ -530,12 +618,18 @@ pub fn run() {
             lib_move_item,
             lib_toggle_favorite,
             lib_reorder_items,
+            lib_record_use,
             profiles_get_data,
             profiles_save,
             profiles_delete,
             profiles_set_layout,
+            profiles_set_descriptions,
             profile_from_json,
             connector_send,
+            llm_enrich,
+            set_llm_config,
+            set_schedules,
+            run_schedule_now,
             clip_copy,
             get_settings,
             set_connectors,

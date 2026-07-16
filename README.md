@@ -41,11 +41,18 @@ It's **local-first** (plain JSON files on your machine — no account, no cloud,
   folder, or edit by hand.
 - **Connectors (Make / n8n)** — paste a webhook URL and Castline POSTs a profile's fields to it, then
   builds/enriches the profile from the JSON your scenario returns. No tunnel, no open port (see below).
+  Also: **Send all profiles** in one payload, send any library item to a webhook from its right-click
+  menu, and **schedule** recurring sends (daily/weekly/monthly) in Settings.
 - **Inbound HTTP endpoints** — flip it around: enable a token-gated local endpoint and paste its exact
   config into a Make **HTTP** module (or n8n **HTTP Request** node) to **Create** or **Update/enrich**
   a profile from the outside.
+- **Castline AI enrich** — one OpenRouter call fills a profile's variables from what's already known
+  (optionally with live web research). Guided by per-variable **descriptions** you write in Settings.
 - **AI agent** — an embedded terminal running your own `claude` CLI in the data folder, with a generated
   `CLAUDE.md`, so it can research contacts and create/enrich profiles for you (via the local endpoint).
+- **Date tokens** — `{{today}}` and `{{now}}` fill themselves at copy time, with Make-style formats:
+  `{{today:YYYY-MM-DD}}`, `{{now:HH:mm}}`, `{{today:MMM D, YYYY}}`.
+- **Usage counts** — every card shows how often you've copied it; sort any view by **Most used**.
 
 ## Install
 
@@ -99,6 +106,23 @@ scenario returns — a single request/response round-trip on the connection Cast
 Response keys become variables of the same name — all mapping lives in your Make/n8n scenario, so
 changing fields never means reconfiguring Castline. No integration? **Paste JSON…** in Profiles still
 works.
+
+**Outbound extras:** the Profiles header has **Send all ▾** (POSTs `{ "profiles": [ { name, values } ] }`
+to a connector in one click), any library item can be sent to a connector from its right-click menu, and
+**Settings → Scheduled webhooks** automates either on a daily/weekly/monthly cadence (runs while the app
+is open; overdue schedules fire on launch).
+
+## Castline AI enrich (OpenRouter)
+
+Each profile's **Enrich ▾** menu offers three routes: **Castline AI** (structured, one call), any
+**webhook connector** (your Make/n8n scenario), or **Ask the Agent** (open-ended, in the terminal).
+
+For Castline AI, add an [OpenRouter](https://openrouter.ai/keys) API key in **Settings → AI workflow**,
+pick a model, and optionally enable **Web research** (OpenRouter's `:online` mode — the model searches
+the web live). The call sends the profile's current values plus the **variable descriptions** you write
+in **Settings → Variables** — e.g. describing `{{companyName}}` as *"simplified lowercase company name:
+'RocketFarm Studios LLC' → 'rocketfarm'"* makes every enrichment come back in exactly that shape. The
+same descriptions are baked into the agent's `CLAUDE.md`.
 
 ## Inbound HTTP endpoints → push profiles in (Make / n8n HTTP module)
 
@@ -156,9 +180,11 @@ castline/
   src-tauri/src/
     library.rs         folders + items store (library.json)
     profiles.rs        variable profiles store (profiles.json)
-    settings.rs        app settings (connectors + HTTP endpoint + AI config)
+    settings.rs        app settings (connectors, HTTP endpoint, AI, schedules)
     connectors.rs      outbound POST (ureq) + JSON→profile passthrough
     receiver.rs        inbound HTTP endpoint (tiny_http): create / update profile
+    llm.rs             Castline AI enrich (OpenRouter chat completions)
+    scheduler.rs       recurring webhook sends (60s ticker)
     ai.rs              embedded claude PTY (portable-pty) + reader/emitter threads
     agent.rs           generates the agent's CLAUDE.md / MEMORY.md
     lib.rs             Tauri commands + app setup + store file-watcher
