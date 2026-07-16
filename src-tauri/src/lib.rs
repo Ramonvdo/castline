@@ -191,12 +191,33 @@ fn variable_docs(app: &AppHandle) -> Vec<(String, String)> {
 }
 
 /// "Castline AI" enrich: one OpenRouter call that fills the library's variables
-/// for the given profile values. Returns a JSON object string (name → value).
+/// for the given profile values. `context` carries user-supplied notes / an
+/// attached file; `web_search` overrides the saved default for this run.
+/// Returns a JSON object string (name → value).
 #[tauri::command]
-fn llm_enrich(app: AppHandle, values: String) -> Result<String, String> {
-    let cfg = app.state::<SettingsState>().snapshot().llm;
+fn llm_enrich(
+    app: AppHandle,
+    values: String,
+    context: Option<String>,
+    web_search: Option<bool>,
+) -> Result<String, String> {
+    let mut cfg = app.state::<SettingsState>().snapshot().llm;
+    if let Some(w) = web_search {
+        cfg.web_search = w;
+    }
     let vars = variable_docs(&app);
-    llm::enrich(&cfg, &values, &vars)
+    llm::enrich(&cfg, &values, &vars, context.as_deref().unwrap_or(""))
+}
+
+/// Read a small UTF-8 text file (the enrich dialog's .txt/.md attachment).
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    const MAX: u64 = 1_000_000; // 1 MB is plenty for notes
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > MAX {
+        return Err("file is too large (max 1 MB) — trim it down first".into());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("could not read the file as text: {e}"))
 }
 
 /// Save the AI-workflow settings (OpenRouter key / model / web research).
@@ -215,17 +236,44 @@ fn set_llm_config(app: AppHandle, api_key: String, model: String, web_search: bo
 
 // ─── Scheduled outbound webhooks ─────────────────────────────────────────────
 
-/// Persist the schedule list (giving each entry a stable id).
+/// Persist the schedule list (giving each entry a stable id; new entries are
+/// anchored at "now" so their first send comes after one full cadence).
 #[tauri::command]
 fn set_schedules(app: AppHandle, schedules: Vec<settings::Schedule>) -> AppSettings {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     let state = app.state::<SettingsState>();
     {
         let mut s = state.data.lock().unwrap();
         let mut list = schedules;
-        settings::normalize_schedules(&mut list);
+        settings::normalize_schedules(&mut list, now);
         s.schedules = list;
     }
     state.save();
+    state.snapshot()
+}
+
+// ─── Autostart (launch on login) ─────────────────────────────────────────────
+
+/// Apply the persisted autostart preference to the OS (registry Run key on
+/// Windows). Best-effort: dev builds point at the dev exe, which is fine.
+fn apply_autostart(app: &AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let mgr = app.autolaunch();
+    let _ = if enabled { mgr.enable() } else { mgr.disable() };
+}
+
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> AppSettings {
+    let state = app.state::<SettingsState>();
+    {
+        let mut s = state.data.lock().unwrap();
+        s.autostart = enabled;
+    }
+    state.save();
+    apply_autostart(&app, enabled);
     state.snapshot()
 }
 
@@ -577,6 +625,10 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(LibraryState::load(data_dir.join("library.json")))
         .manage(ProfilesState::load(data_dir.join("profiles.json")))
         .manage(SettingsState::load())
@@ -591,18 +643,76 @@ pub fn run() {
             }
             // Live-reload the JSON stores when they change on disk.
             spawn_store_watcher(handle.clone());
-            // Scheduled outbound webhooks (60s ticker; overdue fire on launch).
+            // Scheduled jobs (missed runs re-anchor; first tick after ~90s).
             scheduler::spawn(handle.clone());
             // Fixed window border colour instead of the system accent.
             if let Some(win) = handle.get_webview_window("main") {
                 set_window_border(&win);
             }
+            // Launch-on-login: sync the OS Run entry to the persisted setting.
+            let autostart = handle.state::<SettingsState>().snapshot().autostart;
+            apply_autostart(handle, autostart);
+
+            // System tray: Castline keeps running (scheduler, endpoint, agent)
+            // when the window is closed; reopen or quit from here.
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+                let show_main = |app: &AppHandle| {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
+                    }
+                };
+                let open_i = MenuItem::with_id(app, "open", "Open Castline", true, None::<&str>)?;
+                let quit_i = MenuItem::with_id(app, "quit", "Quit Castline", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&open_i, &quit_i])?;
+                let mut tray = TrayIconBuilder::with_id("castline-tray")
+                    .tooltip("Castline")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(move |app, event| match event.id.as_ref() {
+                        "open" => show_main(app),
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            let app = tray.app_handle();
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.unminimize();
+                                let _ = w.set_focus();
+                            }
+                        }
+                    });
+                if let Some(icon) = app.default_window_icon() {
+                    tray = tray.icon(icon.clone());
+                }
+                tray.build(app)?;
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Tear the PTY down with the window so no claude child lingers.
-            if let tauri::WindowEvent::Destroyed = event {
-                ai::stop(window.app_handle());
+            match event {
+                // Close = hide to the tray; the app (scheduler, endpoint,
+                // agent) keeps running. Quit lives in the tray menu.
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                // Tear the PTY down with the window so no claude child lingers.
+                tauri::WindowEvent::Destroyed => {
+                    ai::stop(window.app_handle());
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -630,6 +740,8 @@ pub fn run() {
             set_llm_config,
             set_schedules,
             run_schedule_now,
+            set_autostart,
+            read_text_file,
             clip_copy,
             get_settings,
             set_connectors,

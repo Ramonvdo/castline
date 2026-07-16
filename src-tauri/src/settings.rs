@@ -71,28 +71,39 @@ fn default_model() -> String {
     "google/gemini-2.5-flash".into()
 }
 
-/// A recurring outbound send: POST all profiles (or one library item) to a
-/// connector every day/week/month. Runs while the app is open; overdue
-/// schedules fire on launch.
+/// A recurring job: POST all profiles / one item / one folder to a connector,
+/// or back the data up to a local folder — every day/week/month. Runs while
+/// the app is open. Missed runs are **skipped** (cadence re-anchors at launch)
+/// unless `catch_up` is set, in which case at most ONE catch-up run fires.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schedule {
     #[serde(default)]
     pub id: String,
-    /// "profiles" (all profiles) | "item" (one library item).
+    /// "profiles" (all profiles) | "item" (one library item) |
+    /// "folder" (all items of one folder) | "backup" (local file backup).
     #[serde(default = "default_schedule_kind")]
     pub kind: String,
     /// The library item to send when `kind == "item"`.
     #[serde(default)]
     pub item_id: String,
-    /// Which connector receives the payload.
+    /// The folder to send when `kind == "folder"`.
+    #[serde(default)]
+    pub folder_id: String,
+    /// Target directory when `kind == "backup"`.
+    #[serde(default)]
+    pub dir: String,
+    /// Which connector receives the payload (unused for "backup").
     #[serde(default)]
     pub connector_id: String,
     /// "day" | "week" | "month".
     #[serde(default = "default_every")]
     pub every: String,
-    /// Unix seconds of the last successful run (0 = never).
+    /// Unix seconds of the last run (0 = never).
     #[serde(default)]
     pub last_run: i64,
+    /// Run once at launch if a cadence was missed (off = skip missed runs).
+    #[serde(default)]
+    pub catch_up: bool,
 }
 
 fn default_schedule_kind() -> String {
@@ -111,19 +122,37 @@ pub fn every_secs(every: &str) -> i64 {
     }
 }
 
-/// Whether a schedule is due at `now` (unix secs). Never-run schedules are due
-/// immediately so a fresh schedule sends right away and then settles into cadence.
+/// Whether a schedule is due at `now` (unix secs).
 pub fn schedule_due(s: &Schedule, now: i64) -> bool {
     now - s.last_run >= every_secs(&s.every)
 }
 
-/// Give every schedule a stable id (called whenever schedules are saved).
-pub fn normalize_schedules(schedules: &mut [Schedule]) {
+/// Give every schedule a stable id, and anchor brand-new ones at `now` so the
+/// first send happens after one full cadence (use "Run now" for immediately).
+pub fn normalize_schedules(schedules: &mut [Schedule], now: i64) {
     for s in schedules.iter_mut() {
         if s.id.trim().is_empty() {
             s.id = gen_id();
+            if s.last_run == 0 {
+                s.last_run = now;
+            }
         }
     }
+}
+
+/// Launch-time reconciliation: schedules that missed their window while the
+/// app was closed get re-anchored at `now` WITHOUT sending — unless they opted
+/// into `catch_up` (those stay due and the ticker fires them exactly once).
+/// Returns whether anything changed (caller persists).
+pub fn reconcile_missed(schedules: &mut [Schedule], now: i64) -> bool {
+    let mut changed = false;
+    for s in schedules.iter_mut() {
+        if !s.catch_up && schedule_due(s, now) {
+            s.last_run = now;
+            changed = true;
+        }
+    }
+    changed
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +160,9 @@ pub struct AppSettings {
     /// Reserved for forward-compat; Castline ships one fixed dark theme.
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Launch Castline when the user logs in (default on; Settings toggle).
+    #[serde(default = "default_true")]
+    pub autostart: bool,
     #[serde(default)]
     pub connectors: Vec<Connector>,
     #[serde(default)]
@@ -147,6 +179,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             theme: default_theme(),
+            autostart: true,
             connectors: Vec::new(),
             http: HttpConfig::default(),
             ai: AiConfig::default(),
@@ -154,6 +187,10 @@ impl Default for AppSettings {
             schedules: Vec::new(),
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_theme() -> String {
@@ -260,16 +297,23 @@ mod tests {
         assert!(s.ai.claude_path.is_empty());
     }
 
-    #[test]
-    fn schedule_due_logic() {
-        let mut s = Schedule {
+    fn sched(every: &str, last_run: i64, catch_up: bool) -> Schedule {
+        Schedule {
             id: "s1".into(),
             kind: "profiles".into(),
             item_id: String::new(),
+            folder_id: String::new(),
+            dir: String::new(),
             connector_id: "c1".into(),
-            every: "day".into(),
-            last_run: 0,
-        };
+            every: every.into(),
+            last_run,
+            catch_up,
+        }
+    }
+
+    #[test]
+    fn schedule_due_logic() {
+        let mut s = sched("day", 0, false);
         // Never run (last_run = 0) → due immediately at any real clock time.
         let now = 1_700_000_000;
         assert!(schedule_due(&s, now));
@@ -283,12 +327,40 @@ mod tests {
         assert!(!schedule_due(&s, now + 6 * 86_400));
         assert!(schedule_due(&s, now + 8 * 86_400));
 
-        // Old settings without llm/schedules load cleanly.
+        // Old settings without llm/schedules load cleanly; autostart defaults on.
         let json = r#"{ "theme": "dark" }"#;
         let cfg: AppSettings = serde_json::from_str(json).unwrap();
         assert!(cfg.schedules.is_empty());
         assert!(cfg.llm.api_key.is_empty());
         assert_eq!(cfg.llm.model, "google/gemini-2.5-flash");
+        assert!(cfg.autostart);
+    }
+
+    #[test]
+    fn missed_schedules_reanchor_unless_catch_up() {
+        let now = 1_700_000_000;
+        let week_ago = now - 8 * 86_400;
+        let mut list = vec![
+            sched("day", week_ago, false),  // missed, no catch-up → re-anchor
+            sched("day", week_ago, true),   // missed, catch-up → left due
+            sched("week", now - 3_600, false), // not due → untouched
+        ];
+        assert!(reconcile_missed(&mut list, now));
+        assert_eq!(list[0].last_run, now); // skipped, cadence restarts
+        assert_eq!(list[1].last_run, week_ago); // still due for ONE catch-up run
+        assert!(schedule_due(&list[1], now));
+        assert_eq!(list[2].last_run, now - 3_600);
+
+        // Nothing due → no change reported.
+        assert!(!reconcile_missed(&mut list, now));
+
+        // New schedules get anchored at save time (first send after one cadence).
+        let mut fresh = vec![sched("week", 0, false)];
+        fresh[0].id = String::new();
+        normalize_schedules(&mut fresh, now);
+        assert!(!fresh[0].id.is_empty());
+        assert_eq!(fresh[0].last_run, now);
+        assert!(!schedule_due(&fresh[0], now + 60));
     }
 
     #[test]

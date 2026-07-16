@@ -13,8 +13,9 @@ use crate::settings::LlmConfig;
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
 /// Build the chat messages: a strict system prompt (with the variable docs) and
-/// the current profile values as the user turn.
-pub fn build_messages(values_json: &str, vars: &[(String, String)]) -> Value {
+/// the current profile values (+ any user-supplied context, e.g. pasted notes
+/// or an attached .txt/.md file) as the user turn.
+pub fn build_messages(values_json: &str, vars: &[(String, String)], context: &str) -> Value {
     let mut var_lines = String::new();
     for (name, desc) in vars {
         if desc.trim().is_empty() {
@@ -38,9 +39,17 @@ pub fn build_messages(values_json: &str, vars: &[(String, String)]) -> Value {
          - Values must be plain strings.\n\n\
          Variables:\n{var_lines}"
     );
+    let mut user = format!("Current profile values:\n{values_json}");
+    if !context.trim().is_empty() {
+        user.push_str(&format!(
+            "\n\nAdditional information supplied by the user (notes / attached file) — treat this \
+             as the most authoritative source:\n{}",
+            context.trim()
+        ));
+    }
     json!([
         { "role": "system", "content": system },
-        { "role": "user", "content": format!("Current profile values:\n{values_json}") }
+        { "role": "user", "content": user }
     ])
 }
 
@@ -70,9 +79,15 @@ pub fn parse_reply(body: &str) -> Result<String, String> {
 }
 
 /// Run the enrich call. `values_json` is the profile's current values as JSON;
-/// returns a JSON object string of variable → filled value.
-pub fn enrich(cfg: &LlmConfig, values_json: &str, vars: &[(String, String)]) -> Result<String, String> {
-    enrich_at(OPENROUTER_URL, cfg, values_json, vars)
+/// `context` is optional user-supplied information; returns a JSON object
+/// string of variable → filled value.
+pub fn enrich(
+    cfg: &LlmConfig,
+    values_json: &str,
+    vars: &[(String, String)],
+    context: &str,
+) -> Result<String, String> {
+    enrich_at(OPENROUTER_URL, cfg, values_json, vars, context)
 }
 
 /// Same as `enrich` but with an injectable endpoint (unit tests point this at a
@@ -82,6 +97,7 @@ pub fn enrich_at(
     cfg: &LlmConfig,
     values_json: &str,
     vars: &[(String, String)],
+    context: &str,
 ) -> Result<String, String> {
     if cfg.api_key.trim().is_empty() {
         return Err("No OpenRouter API key — add one in Settings → AI workflow.".into());
@@ -93,9 +109,13 @@ pub fn enrich_at(
     if cfg.web_search && !model.ends_with(":online") {
         model.push_str(":online");
     }
+    // Cap the completion size: the reply is one small JSON object, and leaving
+    // max_tokens unset makes OpenRouter assume the model maximum — which fails
+    // the pre-flight credit check (402) on free/low-credit accounts.
     let payload = json!({
         "model": model,
-        "messages": build_messages(values_json, vars),
+        "max_tokens": 2048,
+        "messages": build_messages(values_json, vars, context),
     });
     let resp = ureq::post(url)
         .timeout(Duration::from_secs(120))
@@ -134,18 +154,26 @@ mod tests {
     }
 
     #[test]
-    fn messages_carry_values_and_descriptions() {
+    fn messages_carry_values_descriptions_and_context() {
         let msgs = build_messages(
             r#"{"company":"RocketFarm Studios LLC"}"#,
             &[
                 ("companyName".into(), "abbreviated lowercase name, e.g. rocketfarm".into()),
                 ("firstName".into(), String::new()),
             ],
+            "Met Sam at the conference; they're the CTO.",
         );
         let sys = msgs[0]["content"].as_str().unwrap();
         assert!(sys.contains("companyName: abbreviated lowercase name"));
         assert!(sys.contains("- firstName\n"));
-        assert!(msgs[1]["content"].as_str().unwrap().contains("RocketFarm Studios LLC"));
+        let user = msgs[1]["content"].as_str().unwrap();
+        assert!(user.contains("RocketFarm Studios LLC"));
+        assert!(user.contains("Met Sam at the conference"));
+        assert!(user.contains("Additional information supplied by the user"));
+
+        // No context → no context section.
+        let bare = build_messages("{}", &[], "  ");
+        assert!(!bare[1]["content"].as_str().unwrap().contains("Additional information"));
     }
 
     #[test]
@@ -180,7 +208,7 @@ mod tests {
 
         let mut nokey = cfg();
         nokey.api_key = String::new();
-        assert!(enrich_at("http://127.0.0.1:1/x", &nokey, "{}", &[]).unwrap_err().contains("API key"));
+        assert!(enrich_at("http://127.0.0.1:1/x", &nokey, "{}", &[], "").unwrap_err().contains("API key"));
 
         // A fake OpenRouter: drain the request, answer with a chat completion.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -231,16 +259,78 @@ mod tests {
             &cfg(),
             r#"{"email":"sam@acme.com"}"#,
             &[("firstName".into(), String::new())],
+            "extra user context rides along",
         )
         .unwrap();
         let request = handle.join().unwrap();
 
         let obj: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(obj["firstName"], "Sam");
-        // The request carried auth + our model + the profile data.
+        // The request carried auth + our model + the profile data + the context.
         assert!(request.contains("Bearer sk-or-test"));
         assert!(request.contains("test/model"));
         assert!(request.contains("sam@acme.com"));
+        assert!(request.contains("extra user context rides along"));
+    }
+
+    // ── Live OpenRouter smoke tests — need a real key, so ignored by default.
+    // Run with:  OPENROUTER_KEY=<key> cargo test -- --ignored --nocapture
+    fn live_cfg(web: bool) -> Option<LlmConfig> {
+        let key = std::env::var("OPENROUTER_KEY").ok()?;
+        Some(LlmConfig { api_key: key, model: "google/gemini-2.5-flash".into(), web_search: web })
+    }
+    fn live_vars() -> Vec<(String, String)> {
+        vec![
+            (
+                "companyName".into(),
+                "simplified lowercase company name without suffixes, e.g. \"RocketFarm Studios LLC\" becomes \"rocketfarm\"".into(),
+            ),
+            ("firstName".into(), "the contact's first name only".into()),
+        ]
+    }
+
+    #[test]
+    #[ignore]
+    fn live_openrouter_enrich() {
+        let Some(cfg) = live_cfg(false) else {
+            panic!("set OPENROUTER_KEY to run the live test");
+        };
+        let out = enrich(
+            &cfg,
+            r#"{"company":"Anthropic PBC","email":"sam@anthropic.com"}"#,
+            &live_vars(),
+            "The contact signs their emails as Sam.",
+        )
+        .expect("live enrich failed");
+        println!("live enrich → {out}");
+        let obj: Value = serde_json::from_str(&out).unwrap();
+        assert!(obj.is_object());
+        // The description demands the simplified lowercase form.
+        assert_eq!(obj["companyName"].as_str().unwrap_or("").to_lowercase(), "anthropic");
+        assert_eq!(obj["firstName"].as_str().unwrap_or(""), "Sam");
+    }
+
+    #[test]
+    #[ignore]
+    fn live_openrouter_web_research() {
+        let Some(cfg) = live_cfg(true) else {
+            panic!("set OPENROUTER_KEY to run the live test");
+        };
+        // Web research: the model must look this up (not in the prompt).
+        let out = enrich(
+            &cfg,
+            r#"{"company":"Tauri (the Rust desktop-app framework)"}"#,
+            &[(
+                "website".into(),
+                "the official homepage URL of the company/project".into(),
+            )],
+            "",
+        )
+        .expect("live web-research enrich failed");
+        println!("live :online enrich → {out}");
+        let obj: Value = serde_json::from_str(&out).unwrap();
+        let site = obj["website"].as_str().unwrap_or("");
+        assert!(site.contains("tauri.app"), "unexpected website: {site}");
     }
 
     #[test]

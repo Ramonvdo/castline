@@ -7,24 +7,29 @@
     profileFromJson,
     connectorSend,
     llmEnrich,
+    readTextFile,
+    pickContextFile,
   } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props — `layout` is the GLOBAL variable grouping (splitters + ordering),
   // shared by every profile. Presentation-only: never affects `values`, so
   // webhook / n8n / Make mappings keyed on variable names keep working.
-  // `llmReady` = an OpenRouter key is configured (Settings → AI workflow);
-  // `onAgent(text)` hands an instruction to the Agent tab.
+  // `llm` = the AI-workflow settings (key presence gates Castline AI; its
+  // web_search seeds the dialog's per-run toggle); `onAgent(text)` hands an
+  // instruction to the Agent tab.
   let {
     profiles = [],
     layout = [],
     folders = [],
     connectors = [],
-    llmReady = false,
+    llm = { api_key: "", web_search: false },
     flash,
     onData,
     onAgent = () => {},
   } = $props();
+
+  let llmReady = $derived(!!(llm && llm.api_key));
 
   let editingId = $state(null); // null = list, "" = new, <id> = editing
   let name = $state("");
@@ -272,19 +277,48 @@
     enrichBusy = false;
   }
 
-  // "Castline AI": one OpenRouter call fills the library's variables using the
-  // profile's current values + the descriptions from Settings.
-  async function enrichAI(p) {
+  // "Castline AI": a small dialog first — extra context, an optional .txt/.md
+  // attachment, and a per-run web-research toggle — then one OpenRouter call.
+  let aiPanel = $state(null); // { profile }
+  let aiContext = $state("");
+  let aiFile = $state(null); // { name, text }
+  let aiWeb = $state(false);
+
+  function openAiPanel(p) {
     enrichForId = null;
-    enrichBusy = true;
-    flash("Castline AI is researching…");
+    aiPanel = { profile: p };
+    aiContext = "";
+    aiFile = null;
+    aiWeb = !!(llm && llm.web_search);
+  }
+  async function attachAiFile() {
+    const path = await pickContextFile();
+    if (!path) return;
     try {
-      const body = await llmEnrich(JSON.stringify(p.values));
+      const text = await readTextFile(path);
+      aiFile = { name: path.split(/[\\/]/).pop(), text };
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+  async function runAiEnrich() {
+    const p = aiPanel?.profile;
+    if (!p) return;
+    enrichBusy = true;
+    try {
+      const ctx = [
+        aiContext.trim(),
+        aiFile ? `--- Attached file: ${aiFile.name} ---\n${aiFile.text}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      const body = await llmEnrich(JSON.stringify(p.values), ctx, aiWeb);
       const obj = parseObj(body);
       if (!obj || !Object.keys(obj).length) {
         flash("The AI returned no fields");
       } else {
         await mergeEnriched(p, obj, "Castline AI");
+        aiPanel = null;
       }
     } catch (e) {
       flash(String(e));
@@ -443,10 +477,10 @@
                     title={llmReady
                       ? "One AI call fills the library's variables"
                       : "Add an OpenRouter key in Settings → AI workflow"}
-                    onclick={() => enrichAI(p)}
+                    onclick={() => openAiPanel(p)}
                   >
                     <Icon name="sparkle" size={13} /> Castline AI{llmReady
-                      ? ""
+                      ? "…"
                       : " (no API key)"}
                   </button>
                   {#if connectors.length}
@@ -547,6 +581,56 @@
     </div>
   {/if}
 </div>
+
+{#if aiPanel}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="ai-overlay" onclick={(e) => e.target === e.currentTarget && !enrichBusy && (aiPanel = null)}>
+    <div class="ai-modal">
+      <div class="ai-head">
+        <h3><Icon name="sparkle" size={16} /> Enrich “{aiPanel.profile.name}” with Castline AI</h3>
+        <button class="icon-btn" title="Close" disabled={enrichBusy} onclick={() => (aiPanel = null)}><Icon name="close" size={16} /></button>
+      </div>
+      <p class="ai-sub">
+        One AI call fills the library's variables from the profile's current values, your variable
+        descriptions, and any extra information you add below.
+      </p>
+
+      <label class="ai-fld">
+        <span>Extra context (optional)</span>
+        <textarea
+          class="field"
+          rows="4"
+          bind:value={aiContext}
+          placeholder="Anything you know: notes from a call, a LinkedIn blurb, the company's about-page text…"
+        ></textarea>
+      </label>
+
+      <div class="ai-row">
+        {#if aiFile}
+          <span class="ai-file" title="Attached file">
+            <Icon name="template" size={13} /> {aiFile.name}
+            <span class="ai-size">{Math.ceil(aiFile.text.length / 1000)} k</span>
+            <button class="icon-btn xs" title="Remove file" onclick={() => (aiFile = null)}><Icon name="close" size={12} /></button>
+          </span>
+        {:else}
+          <button class="ghost sm" onclick={attachAiFile}><Icon name="plus" size={13} /> Attach a .txt / .md file</button>
+        {/if}
+
+        <label class="ai-web" title="OpenRouter :online — works with any model">
+          <input type="checkbox" bind:checked={aiWeb} />
+          <span>Web research</span>
+        </label>
+      </div>
+
+      <div class="ai-actions">
+        <button class="ghost" disabled={enrichBusy} onclick={() => (aiPanel = null)}>Cancel</button>
+        <button class="btn" disabled={enrichBusy} onclick={runAiEnrich}>
+          {enrichBusy ? "Researching…" : "Enrich profile"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .view {
@@ -804,5 +888,110 @@
   .editor-actions {
     display: flex;
     gap: 8px;
+  }
+
+  /* ── Castline AI enrich dialog ── */
+  .ai-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: rgba(4, 7, 13, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .ai-modal {
+    width: min(560px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ai-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .ai-head h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--accent-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ai-sub {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .ai-fld {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ai-fld textarea {
+    resize: vertical;
+    font-family: inherit;
+  }
+  .ai-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .ai-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    font-family: var(--font-mono);
+    color: var(--text);
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 9px;
+    max-width: 320px;
+    overflow: hidden;
+  }
+  .ai-size {
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .ghost.sm {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .icon-btn.xs {
+    padding: 3px;
+  }
+  .ai-web {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .ai-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
   }
 </style>

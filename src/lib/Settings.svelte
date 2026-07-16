@@ -13,6 +13,8 @@
     setLlmConfig,
     setSchedules,
     runScheduleNow,
+    setAutostart,
+    pickDirectory,
     getSettings,
     getProfiles,
   } from "./api.js";
@@ -57,9 +59,26 @@
   let llmModel = $state("google/gemini-2.5-flash");
   let llmWeb = $state(false);
 
-  // ── Scheduled webhooks ──
+  // ── Startup & tray ──
+  let autostart = $state(true);
+  async function toggleAutostart() {
+    const s = await setAutostart(!autostart);
+    autostart = !!s.autostart;
+    onSettings(s);
+    flash(autostart ? "Castline starts with Windows" : "Autostart off");
+  }
+
+  // ── Scheduled jobs ──
   let schedules = $state([]);
   let schedDirty = $state(false);
+
+  async function browseDir(sch) {
+    const dir = await pickDirectory();
+    if (dir) {
+      sch.dir = dir;
+      schedDirty = true;
+    }
+  }
 
   // Every item across the library, for the "send one item" schedule picker.
   let allItems = $derived.by(() => {
@@ -72,6 +91,7 @@
   onMount(async () => {
     dataDir = await getDataDir();
     const s = await getSettings();
+    autostart = s.autostart !== false;
     llmKey = s.llm?.api_key || "";
     llmModel = s.llm?.model || "google/gemini-2.5-flash";
     llmWeb = !!s.llm?.web_search;
@@ -104,9 +124,12 @@
         id: "",
         kind: "profiles",
         item_id: allItems[0]?.id || "",
+        folder_id: folders[0]?.id || "",
+        dir: "",
         connector_id: connectors[0]?.id || "",
         every: "week",
         last_run: 0,
+        catch_up: false,
       },
     ];
     schedDirty = true;
@@ -232,6 +255,18 @@
   </section>
 
   <section class="panel">
+    <h4>Startup &amp; tray</h4>
+    <label class="checkrow">
+      <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
+      <span><strong>Start Castline when you log in</strong> — the scheduler, HTTP endpoint and tray are ready without opening the app.</span>
+    </label>
+    <p class="hint dim">
+      Closing the window keeps Castline running in the system tray (look under “show hidden icons”).
+      Reopen with a click on the tray icon; <strong>Quit</strong> lives in its right-click menu.
+    </p>
+  </section>
+
+  <section class="panel">
     <h4>Variables</h4>
     <p class="hint">
       Every <code>{"{{variable}}"}</code> your library currently uses. Describe what each value must
@@ -288,46 +323,61 @@
   </section>
 
   <section class="panel">
-    <h4>Scheduled webhooks</h4>
+    <h4>Scheduled jobs</h4>
     <p class="hint">
-      Automatically POST <strong>all profiles</strong> (or one library item) to a connector on a cadence.
-      Runs while Castline is open; anything overdue fires on launch.
+      On a daily/weekly/monthly cadence: POST <strong>all profiles</strong>, <strong>one item</strong> or a
+      <strong>whole folder</strong> to a connector — or write a local <strong>backup</strong> of your data.
+      Runs while Castline is open (the tray keeps it open). Missed runs are <strong>skipped</strong> — the
+      cadence restarts at launch — unless a job opts into <em>Catch up</em>, which fires it once.
     </p>
-    {#if connectors.length === 0}
-      <p class="hint dim">Add a connector first (Connectors tab) — schedules send to connectors.</p>
-    {:else}
-      {#each schedules as sch, i (i)}
-        <div class="schedrow">
-          <select class="field sel" bind:value={sch.kind} onchange={() => (schedDirty = true)}>
-            <option value="profiles">All profiles</option>
-            <option value="item">One item</option>
+    {#each schedules as sch, i (i)}
+      <div class="schedrow">
+        <select class="field sel" bind:value={sch.kind} onchange={() => (schedDirty = true)}>
+          <option value="profiles">All profiles</option>
+          <option value="item">One item</option>
+          <option value="folder">One folder</option>
+          <option value="backup">Backup data</option>
+        </select>
+        {#if sch.kind === "item"}
+          <select class="field sel wide" bind:value={sch.item_id} onchange={() => (schedDirty = true)}>
+            {#each allItems as it (it.id)}<option value={it.id}>{it.label}</option>{/each}
           </select>
-          {#if sch.kind === "item"}
-            <select class="field sel wide" bind:value={sch.item_id} onchange={() => (schedDirty = true)}>
-              {#each allItems as it (it.id)}<option value={it.id}>{it.label}</option>{/each}
-            </select>
-          {/if}
-          <span class="arrow">→</span>
+        {:else if sch.kind === "folder"}
+          <select class="field sel wide" bind:value={sch.folder_id} onchange={() => (schedDirty = true)}>
+            {#each folders as f (f.id)}<option value={f.id}>{f.name}</option>{/each}
+          </select>
+        {/if}
+        <span class="arrow">→</span>
+        {#if sch.kind === "backup"}
+          <input class="field sel wide" bind:value={sch.dir} placeholder="Backup folder…" onchange={() => (schedDirty = true)} />
+          <button class="ghost sm" onclick={() => browseDir(sch)}>Browse…</button>
+        {:else if connectors.length}
           <select class="field sel wide" bind:value={sch.connector_id} onchange={() => (schedDirty = true)}>
             {#each connectors as c (c.id)}<option value={c.id}>{c.name || c.url}</option>{/each}
           </select>
-          <select class="field sel" bind:value={sch.every} onchange={() => (schedDirty = true)}>
-            <option value="day">Every day</option>
-            <option value="week">Every week</option>
-            <option value="month">Every month</option>
-          </select>
-          <span class="lastrun" title="Last sent">{lastRunLabel(sch.last_run)}</span>
-          <button class="ghost sm" disabled={!sch.id || schedDirty} title={!sch.id || schedDirty ? "Save schedules first" : "Send now"} onclick={() => runNow(sch)}>Run now</button>
-          <button class="icon-btn" title="Delete schedule" onclick={() => removeSchedule(i)}><Icon name="trash" size={14} /></button>
-        </div>
-      {/each}
-      <div class="sched-actions">
-        <button class="ghost" onclick={addSchedule}><Icon name="plus" size={14} /> Add schedule</button>
-        {#if schedules.length || schedDirty}
-          <button class="btn" onclick={saveSchedules}>Save schedules</button>
+        {:else}
+          <span class="hint dim">Add a connector first (Connectors tab)</span>
         {/if}
+        <select class="field sel" bind:value={sch.every} onchange={() => (schedDirty = true)}>
+          <option value="day">Every day</option>
+          <option value="week">Every week</option>
+          <option value="month">Every month</option>
+        </select>
+        <label class="catchup" title="If a run was missed while the app was closed, fire it once at launch (off = skip missed runs)">
+          <input type="checkbox" bind:checked={sch.catch_up} onchange={() => (schedDirty = true)} />
+          <span>Catch up</span>
+        </label>
+        <span class="lastrun" title="Last run">{lastRunLabel(sch.last_run)}</span>
+        <button class="ghost sm" disabled={!sch.id || schedDirty} title={!sch.id || schedDirty ? "Save schedules first" : "Run now"} onclick={() => runNow(sch)}>Run now</button>
+        <button class="icon-btn" title="Delete schedule" onclick={() => removeSchedule(i)}><Icon name="trash" size={14} /></button>
       </div>
-    {/if}
+    {/each}
+    <div class="sched-actions">
+      <button class="ghost" onclick={addSchedule}><Icon name="plus" size={14} /> Add schedule</button>
+      {#if schedules.length || schedDirty}
+        <button class="btn" onclick={saveSchedules}>Save schedules</button>
+      {/if}
+    </div>
   </section>
 
   <section class="panel about">
@@ -502,6 +552,16 @@
     color: var(--faint);
     font-size: 11.5px;
     font-family: var(--font-mono);
+  }
+  .catchup {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
   }
   .ghost.sm {
     padding: 6px 10px;

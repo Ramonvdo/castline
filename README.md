@@ -53,6 +53,9 @@ It's **local-first** (plain JSON files on your machine — no account, no cloud,
 - **Date tokens** — `{{today}}` and `{{now}}` fill themselves at copy time, with Make-style formats:
   `{{today:YYYY-MM-DD}}`, `{{now:HH:mm}}`, `{{today:MMM D, YYYY}}`.
 - **Usage counts** — every card shows how often you've copied it; sort any view by **Most used**.
+- **Starts with Windows & lives in the tray** — autostart is on by default (toggle in Settings);
+  closing the window keeps Castline running in the system tray, so schedules, the HTTP endpoint and
+  the agent stay available. Reopen from the tray icon; **Quit** is in its right-click menu.
 
 ## Install
 
@@ -108,19 +111,23 @@ changing fields never means reconfiguring Castline. No integration? **Paste JSON
 works.
 
 **Outbound extras:** the Profiles header has **Send all ▾** (POSTs `{ "profiles": [ { name, values } ] }`
-to a connector in one click), any library item can be sent to a connector from its right-click menu, and
-**Settings → Scheduled webhooks** automates either on a daily/weekly/monthly cadence (runs while the app
-is open; overdue schedules fire on launch).
+to a connector in one click), and any library item has a **plug button** (and right-click entry) to send
+it to a connector. **Settings → Scheduled jobs** automates it on a daily/weekly/monthly cadence: all
+profiles, one item, a whole folder — or a local **backup** of your data files. Schedules run while
+Castline is open (the tray keeps it open); **missed runs are skipped** and the cadence re-anchors at
+launch, unless a job opts into *Catch up*, which fires it exactly once.
 
 ## Castline AI enrich (OpenRouter)
 
 Each profile's **Enrich ▾** menu offers three routes: **Castline AI** (structured, one call), any
 **webhook connector** (your Make/n8n scenario), or **Ask the Agent** (open-ended, in the terminal).
 
-For Castline AI, add an [OpenRouter](https://openrouter.ai/keys) API key in **Settings → AI workflow**,
-pick a model, and optionally enable **Web research** (OpenRouter's `:online` mode — the model searches
-the web live). The call sends the profile's current values plus the **variable descriptions** you write
-in **Settings → Variables** — e.g. describing `{{companyName}}` as *"simplified lowercase company name:
+For Castline AI, add an [OpenRouter](https://openrouter.ai/keys) API key in **Settings → AI workflow**
+and pick a model. Choosing **Castline AI** opens a small dialog where you can add **extra context**
+(notes from a call, a LinkedIn blurb), **attach a `.txt`/`.md` file**, and toggle **web research** for
+that run — OpenRouter's `:online` mode works with *any* model, so no separate research model is needed.
+The call sends the profile's current values plus the **variable descriptions** you write in
+**Settings → Variables** — e.g. describing `{{companyName}}` as *"simplified lowercase company name:
 'RocketFarm Studios LLC' → 'rocketfarm'"* makes every enrichment come back in exactly that shape. The
 same descriptions are baked into the agent's `CLAUDE.md`.
 

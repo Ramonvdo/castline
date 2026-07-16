@@ -45,13 +45,19 @@ export const httpStatus = () => invoke("http_status");
 export const setHttpEndpoint = (enabled, port) => invoke("set_http_endpoint", { enabled, port });
 
 // ── Castline AI (OpenRouter enrich workflow) ──
-export const llmEnrich = (valuesJson) => invoke("llm_enrich", { values: valuesJson });
+// context = user-typed notes / attached file text; webSearch = per-run override.
+export const llmEnrich = (valuesJson, context = "", webSearch = null) =>
+  invoke("llm_enrich", { values: valuesJson, context, webSearch });
 export const setLlmConfig = (apiKey, model, webSearch) =>
   invoke("set_llm_config", { apiKey, model, webSearch });
+export const readTextFile = (path) => invoke("read_text_file", { path });
 
-// ── Scheduled outbound webhooks ──
+// ── Scheduled jobs ──
 export const setSchedules = (schedules) => invoke("set_schedules", { schedules });
 export const runScheduleNow = (id) => invoke("run_schedule_now", { id });
+
+// ── Startup & tray ──
+export const setAutostart = (enabled) => invoke("set_autostart", { enabled });
 
 // ── Import / export / reveal ──
 export const getDataDir = () => invoke("get_data_dir");
@@ -98,5 +104,20 @@ export async function pickSaveDoc(defaultName) {
 
 export async function pickOpenFile() {
   const path = await open({ multiple: false, filters: JSON_FILTER });
+  return typeof path === "string" ? path : null;
+}
+
+// A .txt/.md context file for the AI enrich dialog.
+export async function pickContextFile() {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "Text / Markdown", extensions: ["txt", "md"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+// A target directory (scheduled backups).
+export async function pickDirectory() {
+  const path = await open({ directory: true, multiple: false });
   return typeof path === "string" ? path : null;
 }

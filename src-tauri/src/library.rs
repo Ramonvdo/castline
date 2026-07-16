@@ -358,6 +358,11 @@ pub fn find_item(data: &LibraryData, item_id: &str) -> Option<LibItem> {
     data.folders.iter().flat_map(|f| f.items.iter()).find(|i| i.id == item_id).cloned()
 }
 
+/// Find a folder by id (used by the "send one folder" schedule kind).
+pub fn find_folder(data: &LibraryData, folder_id: &str) -> Option<LibFolder> {
+    data.folders.iter().find(|f| f.id == folder_id).cloned()
+}
+
 /// True for the auto-filled date/time tokens (`{{today}}`, `{{now:HH:mm}}`) —
 /// they're resolved at copy time and are not real profile variables.
 fn is_auto_var(name: &str) -> bool {

@@ -388,6 +388,9 @@
     editorOpen = false;
     flash(editingId ? "Saved" : "Added");
   }
+  // Anchored connector menu for the card's visible "send to webhook" button.
+  let sendMenu = $state(null); // { item, x, y }
+
   // ── Item right-click menu + always-confirm delete ──
   let itemMenu = $state(null); // { folderId, item, x, y }
   let pendingDelete = $state(null); // { folderId, item }
@@ -765,6 +768,14 @@
               >
                 <Icon name="star" size={15} fill={item.favorite} />
               </button>
+              {#if connectors.length}
+                <button
+                  class="icon-btn xs"
+                  title="Send to webhook"
+                  onclick={(e) => (sendMenu = { item, x: e.clientX, y: e.clientY })}
+                  ><Icon name="plug" size={14} /></button
+                >
+              {/if}
               <button
                 class="icon-btn xs"
                 title="Edit"
@@ -1205,6 +1216,26 @@
     >
       <Icon name="trash" size={14} /> Delete
     </button>
+  </div>
+{/if}
+
+{#if sendMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="ctx-backdrop" onclick={() => (sendMenu = null)} oncontextmenu={(e) => { e.preventDefault(); sendMenu = null; }}></div>
+  <div class="ctx-menu" style:left="{sendMenu.x}px" style:top="{sendMenu.y}px">
+    <div class="ctx-label"><Icon name="plug" size={12} /> Send to webhook</div>
+    {#each connectors as c (c.id)}
+      <button
+        class="ctx-item sub"
+        onclick={() => {
+          const m = sendMenu;
+          sendMenu = null;
+          sendItemTo(m.item, c);
+        }}
+      >
+        {c.name || c.url}
+      </button>
+    {/each}
   </div>
 {/if}
 

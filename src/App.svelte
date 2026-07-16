@@ -166,7 +166,7 @@
     {#if view === "library"}
       <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} connectors={settings.connectors || []} {flash} onFill={openFill} />
     {:else if view === "profiles"}
-      <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} connectors={settings.connectors || []} llmReady={!!(settings.llm && settings.llm.api_key)} {flash} onData={(d) => (profiles = d)} onAgent={askAgent} />
+      <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} connectors={settings.connectors || []} llm={settings.llm || {}} {flash} onData={(d) => (profiles = d)} onAgent={askAgent} />
     {:else if view === "connectors"}
       <Connectors connectors={settings.connectors || []} folders={library.folders} {flash} onSettings={(s) => (settings = s)} />
     {:else if view === "settings"}
