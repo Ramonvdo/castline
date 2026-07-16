@@ -24,6 +24,10 @@ pub struct Profile {
     /// "manual" | "webhook" | "import" — where the profile came from.
     #[serde(default)]
     pub source: String,
+    /// Optional tone-of-voice override for AI-generated values (beats the
+    /// global tone in Settings when non-empty).
+    #[serde(default)]
+    pub tone: String,
 }
 
 /// One entry in the **global variable layout** — either a `splitter` (a labelled
@@ -177,7 +181,7 @@ mod tests {
         vals.insert("firstName".into(), "Sam".into());
         upsert_profile(
             &mut d,
-            Profile { id: String::new(), name: "Client A".into(), values: vals, source: String::new() },
+            Profile { id: String::new(), name: "Client A".into(), values: vals, source: String::new(), tone: String::new() },
         );
         assert_eq!(d.profiles.len(), 1);
         assert_eq!(d.profiles[0].source, "manual"); // defaulted
@@ -190,6 +194,7 @@ mod tests {
                 name: "Client A+".into(),
                 values: BTreeMap::new(),
                 source: "manual".into(),
+                tone: String::new(),
             },
         );
         assert_eq!(d.profiles.len(), 1);
@@ -215,7 +220,7 @@ mod tests {
         vals.insert("firstName".into(), "Sam".into());
         upsert_profile(
             &mut d,
-            Profile { id: String::new(), name: "Sam".into(), values: vals, source: "webhook".into() },
+            Profile { id: String::new(), name: "Sam".into(), values: vals, source: "webhook".into(), tone: String::new() },
         );
         assert_eq!(d.layout.len(), 2);
         assert_eq!(d.layout[0].label, "Contact");
@@ -228,7 +233,7 @@ mod tests {
         for (k, v) in kv {
             values.insert((*k).into(), (*v).into());
         }
-        Profile { id: gen_id(), name: name.into(), values, source: "manual".into() }
+        Profile { id: gen_id(), name: name.into(), values, source: "manual".into(), tone: String::new() }
     }
 
     #[test]

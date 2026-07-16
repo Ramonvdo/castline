@@ -58,6 +58,9 @@
   let llmKey = $state("");
   let llmModel = $state("google/gemini-2.5-flash");
   let llmWeb = $state(false);
+  let llmTone = $state("");
+  const DEFAULT_TONE =
+    "Casual, charismatic, original phrasing. Straight to the point. Never use em dashes (—); use commas or periods instead. No clichés, no corporate filler, no AI-sounding hedging.";
 
   // ── Startup & tray ──
   let autostart = $state(true);
@@ -95,6 +98,7 @@
     llmKey = s.llm?.api_key || "";
     llmModel = s.llm?.model || "google/gemini-2.5-flash";
     llmWeb = !!s.llm?.web_search;
+    llmTone = s.llm?.tone || "";
     schedules = (s.schedules || []).map((x) => ({ ...x }));
 
     const p = await getProfiles();
@@ -112,7 +116,7 @@
   }
 
   async function saveLlm() {
-    const s = await setLlmConfig(llmKey, llmModel, llmWeb);
+    const s = await setLlmConfig(llmKey, llmModel, llmWeb, llmTone);
     onSettings(s);
     flash(llmKey.trim() ? "AI workflow saved" : "AI workflow saved (no key — enrich disabled)");
   }
@@ -315,8 +319,13 @@
     </div>
     <label class="checkrow">
       <input type="checkbox" bind:checked={llmWeb} />
-      <span>Web research — the model searches the web live (OpenRouter <code>:online</code>)</span>
+      <span>Web research — the model searches the web live (OpenRouter <code>:online</code>, works with any model)</span>
     </label>
+    <label class="fld">
+      <span>Tone of voice — applies to every text value the AI writes (a profile can override it)</span>
+      <textarea class="field tone" rows="2" bind:value={llmTone} placeholder={DEFAULT_TONE}></textarea>
+    </label>
+    <p class="hint dim">Leave empty to use Castline's default (shown greyed above): casual, charismatic, straight to the point, never em dashes.</p>
     <div class="row-end">
       <button class="btn" onclick={saveLlm}>Save AI workflow</button>
     </div>
@@ -524,6 +533,11 @@
     color: var(--muted);
     cursor: pointer;
     user-select: none;
+  }
+  .tone {
+    resize: vertical;
+    font-family: inherit;
+    line-height: 1.5;
   }
   .schedrow {
     display: flex;

@@ -45,11 +45,12 @@ export const httpStatus = () => invoke("http_status");
 export const setHttpEndpoint = (enabled, port) => invoke("set_http_endpoint", { enabled, port });
 
 // ── Castline AI (OpenRouter enrich workflow) ──
-// context = user-typed notes / attached file text; webSearch = per-run override.
-export const llmEnrich = (valuesJson, context = "", webSearch = null) =>
-  invoke("llm_enrich", { values: valuesJson, context, webSearch });
-export const setLlmConfig = (apiKey, model, webSearch) =>
-  invoke("set_llm_config", { apiKey, model, webSearch });
+// context = user-typed notes / attached file text; webSearch = per-run
+// override; tone = the profile's tone override (falls back to Settings).
+export const llmEnrich = (valuesJson, context = "", webSearch = null, tone = "") =>
+  invoke("llm_enrich", { values: valuesJson, context, webSearch, tone });
+export const setLlmConfig = (apiKey, model, webSearch, tone) =>
+  invoke("set_llm_config", { apiKey, model, webSearch, tone });
 export const readTextFile = (path) => invoke("read_text_file", { path });
 
 // ── Scheduled jobs ──

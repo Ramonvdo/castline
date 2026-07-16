@@ -186,7 +186,7 @@
 {/if}
 
 {#if fillItem}
-  <FillCopy item={fillItem} mode={fillMode} profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {flash} onClose={() => (fillItem = null)} onUsed={(d) => (library = d)} />
+  <FillCopy item={fillItem} mode={fillMode} profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} connectors={settings.connectors || []} {flash} onClose={() => (fillItem = null)} onUsed={(d) => (library = d)} />
 {/if}
 
 <style>

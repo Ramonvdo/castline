@@ -440,21 +440,26 @@
     flash("Item duplicated");
   }
 
-  // POST one item to an outbound connector (raw text — mapping lives in Make/n8n).
+  // POST one item to an outbound connector. With a profile active, the text is
+  // sent FILLED and the profile's values ride along — so an automation can use
+  // e.g. {{email}} directly (send the message *to* that address in one click).
   async function sendItemTo(item, c) {
+    const vals = activeProfile?.values || {};
     const payload = {
       name: item.name,
       type: item.item_type || "",
       kind: item.kind,
       tags: item.tags || [],
-      text: itemPlainText(item),
-      steps: (item.steps || []).map((s) => ({ title: s.title, text: s.text })),
+      text: applyVars(itemPlainText(item), vals),
+      steps: (item.steps || []).map((s) => ({ title: s.title, text: applyVars(s.text, vals) })),
+      profile: activeProfile ? activeProfile.name : null,
+      variables: vals,
     };
     try {
       const res = await connectorSend(c.url, JSON.stringify(payload));
       flash(
         res.status >= 200 && res.status < 300
-          ? `Sent “${item.name}” → ${c.name || "webhook"}`
+          ? `Sent “${item.name}”${activeProfile ? ` · ${activeProfile.name}` : ""} → ${c.name || "webhook"}`
           : `Webhook answered ${res.status}`,
       );
     } catch (e) {
@@ -771,7 +776,10 @@
               {#if connectors.length}
                 <button
                   class="icon-btn xs"
-                  title="Send to webhook"
+                  class:filled={!!activeProfile}
+                  title={activeProfile
+                    ? `Send filled with ${activeProfile.name} + its variables`
+                    : "Send to webhook"}
                   onclick={(e) => (sendMenu = { item, x: e.clientX, y: e.clientY })}
                   ><Icon name="plug" size={14} /></button
                 >
@@ -827,7 +835,11 @@
             {/if}
 
             <footer>
-              <button class="act" onclick={() => copyItem(item)}
+              <button
+                class="act"
+                class:filled={!!activeProfile}
+                title={activeProfile ? `Copies filled with ${activeProfile.name}` : "Copy"}
+                onclick={() => copyItem(item)}
                 ><Icon name="copy" size={13} /> Copy</button
               >
               {#if vars.length || item.kind === "sop"}
@@ -837,9 +849,10 @@
                     onFill(item, item.kind === "sop" ? "steps" : "auto")}
                 >
                   <Icon
-                    name={item.kind === "sop" ? "sop" : "sparkle"}
+                    name={activeProfile ? "eye" : item.kind === "sop" ? "sop" : "sparkle"}
                     size={13}
-                  /> Fill &amp; copy
+                  />
+                  {activeProfile ? "Preview" : "Fill & copy"}
                 </button>
               {/if}
             </footer>
@@ -1965,6 +1978,13 @@
     transition:
       border-color 0.12s var(--ease),
       background 0.12s var(--ease);
+  }
+  /* A profile is active → variables are filled: accent the borders. */
+  .act.filled,
+  .icon-btn.filled {
+    border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+    color: var(--accent-strong);
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
   }
   .act:hover {
     border-color: var(--accent);

@@ -190,23 +190,72 @@ fn variable_docs(app: &AppHandle) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The library templates where variables are used — capped context so the
+/// model writes values that read naturally in place (e.g. an icebreaker that
+/// fits the sentence around it).
+fn usage_context(app: &AppHandle) -> String {
+    const PER_ITEM: usize = 700;
+    const TOTAL: usize = 5_000;
+    let data = {
+        let state = app.state::<LibraryState>();
+        let out = state.data.lock().unwrap().clone();
+        out
+    };
+    let mut out = String::new();
+    for folder in &data.folders {
+        for item in &folder.items {
+            let mut text = item.text.clone();
+            for step in &item.steps {
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text.push_str(&step.text);
+            }
+            if !text.contains("{{") {
+                continue; // no variables → no useful context
+            }
+            let mut snippet: String = text.chars().take(PER_ITEM).collect();
+            if snippet.len() < text.len() {
+                snippet.push('…');
+            }
+            let block = format!("### {}\n{}\n\n", item.name, snippet);
+            if out.len() + block.len() > TOTAL {
+                return out;
+            }
+            out.push_str(&block);
+        }
+    }
+    out
+}
+
 /// "Castline AI" enrich: one OpenRouter call that fills the library's variables
 /// for the given profile values. `context` carries user-supplied notes / an
-/// attached file; `web_search` overrides the saved default for this run.
-/// Returns a JSON object string (name → value).
+/// attached file; `web_search` overrides the saved default for this run;
+/// `tone` is the profile's override (falls back to Settings, then the built-in
+/// default). Returns a JSON object string (name → value).
 #[tauri::command]
 fn llm_enrich(
     app: AppHandle,
     values: String,
     context: Option<String>,
     web_search: Option<bool>,
+    tone: Option<String>,
 ) -> Result<String, String> {
     let mut cfg = app.state::<SettingsState>().snapshot().llm;
     if let Some(w) = web_search {
         cfg.web_search = w;
     }
     let vars = variable_docs(&app);
-    llm::enrich(&cfg, &values, &vars, context.as_deref().unwrap_or(""))
+    let usage = usage_context(&app);
+    let profile_tone = tone.unwrap_or_default();
+    let tone = llm::effective_tone(&profile_tone, &cfg.tone).to_string();
+    let inputs = llm::EnrichInputs {
+        vars: &vars,
+        context: context.as_deref().unwrap_or(""),
+        usage: &usage,
+        tone: &tone,
+    };
+    llm::enrich(&cfg, &values, &inputs)
 }
 
 /// Read a small UTF-8 text file (the enrich dialog's .txt/.md attachment).
@@ -220,15 +269,22 @@ fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("could not read the file as text: {e}"))
 }
 
-/// Save the AI-workflow settings (OpenRouter key / model / web research).
+/// Save the AI-workflow settings (OpenRouter key / model / web research / tone).
 #[tauri::command]
-fn set_llm_config(app: AppHandle, api_key: String, model: String, web_search: bool) -> AppSettings {
+fn set_llm_config(
+    app: AppHandle,
+    api_key: String,
+    model: String,
+    web_search: bool,
+    tone: String,
+) -> AppSettings {
     let state = app.state::<SettingsState>();
     {
         let mut s = state.data.lock().unwrap();
         s.llm.api_key = api_key.trim().to_string();
         s.llm.model = model.trim().to_string();
         s.llm.web_search = web_search;
+        s.llm.tone = tone.trim().to_string();
     }
     state.save();
     state.snapshot()

@@ -36,7 +36,7 @@ export function formatDate(d, fmt) {
 }
 
 /** Resolve an auto token ("today", "now:HH:mm") to its formatted value. */
-function autoValue(name, now = new Date()) {
+export function autoValue(name, now = new Date()) {
   const idx = name.indexOf(":");
   const head = (idx === -1 ? name : name.slice(0, idx)).trim().toLowerCase();
   const fmt = idx === -1 ? "" : name.slice(idx + 1).trim();

@@ -59,11 +59,15 @@ pub struct LlmConfig {
     /// Append `:online` to the model so OpenRouter runs live web search.
     #[serde(default)]
     pub web_search: bool,
+    /// Tone of voice for generated text values; empty = the built-in default
+    /// (casual, charismatic, no em dashes — see `llm::DEFAULT_TONE`).
+    #[serde(default)]
+    pub tone: String,
 }
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        Self { api_key: String::new(), model: default_model(), web_search: false }
+        Self { api_key: String::new(), model: default_model(), web_search: false, tone: String::new() }
     }
 }
 

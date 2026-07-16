@@ -12,12 +12,43 @@ use crate::settings::LlmConfig;
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
-/// Build the chat messages: a strict system prompt (with the variable docs) and
-/// the current profile values (+ any user-supplied context, e.g. pasted notes
-/// or an attached .txt/.md file) as the user turn.
-pub fn build_messages(values_json: &str, vars: &[(String, String)], context: &str) -> Value {
+/// Castline's built-in tone of voice for generated text values — used when
+/// neither the profile nor Settings configures one.
+pub const DEFAULT_TONE: &str = "Casual, charismatic, original phrasing. Straight to the point. \
+Never use em dashes (—); use commas or periods instead. No clichés, no corporate filler, no \
+AI-sounding hedging.";
+
+/// Resolve the effective tone: profile override → Settings → built-in default.
+pub fn effective_tone<'a>(profile_tone: &'a str, settings_tone: &'a str) -> &'a str {
+    if !profile_tone.trim().is_empty() {
+        profile_tone
+    } else if !settings_tone.trim().is_empty() {
+        settings_tone
+    } else {
+        DEFAULT_TONE
+    }
+}
+
+/// What the model gets to work with, beyond the profile values themselves.
+pub struct EnrichInputs<'a> {
+    /// (name, description) for every library variable.
+    pub vars: &'a [(String, String)],
+    /// User-supplied notes / attached-file text ("" = none).
+    pub context: &'a str,
+    /// The library templates where the variables are used ("" = none) — lets
+    /// the model write values that read naturally in place.
+    pub usage: &'a str,
+    /// Tone of voice for generated text values (already resolved).
+    pub tone: &'a str,
+}
+
+/// Build the chat messages: a strict system prompt (variable docs + template
+/// usage + tone) and the current profile values (+ any user-supplied context)
+/// as the user turn.
+pub fn build_messages(values_json: &str, inputs: &EnrichInputs) -> Value {
+    let EnrichInputs { vars, context, usage, tone } = inputs;
     let mut var_lines = String::new();
-    for (name, desc) in vars {
+    for (name, desc) in vars.iter() {
         if desc.trim().is_empty() {
             var_lines.push_str(&format!("- {name}\n"));
         } else {
@@ -27,7 +58,7 @@ pub fn build_messages(values_json: &str, vars: &[(String, String)], context: &st
     if var_lines.is_empty() {
         var_lines.push_str("(no variable definitions — infer sensible values from the data)\n");
     }
-    let system = format!(
+    let mut system = format!(
         "You enrich a contact/company profile for a templating app. The user gives you the \
          profile's current values as JSON. Research or infer the missing variables and return \
          ONLY a JSON object mapping variable names to string values — no prose, no markdown \
@@ -39,6 +70,20 @@ pub fn build_messages(values_json: &str, vars: &[(String, String)], context: &st
          - Values must be plain strings.\n\n\
          Variables:\n{var_lines}"
     );
+    if !tone.trim().is_empty() {
+        system.push_str(&format!(
+            "\nTone of voice — any text value you write (icebreakers, messages, blurbs) MUST \
+             follow it exactly:\n{}\n",
+            tone.trim()
+        ));
+    }
+    if !usage.trim().is_empty() {
+        system.push_str(&format!(
+            "\nHow the variables are used in the user's templates — write values that read \
+             naturally when substituted in place:\n{}\n",
+            usage.trim()
+        ));
+    }
     let mut user = format!("Current profile values:\n{values_json}");
     if !context.trim().is_empty() {
         user.push_str(&format!(
@@ -79,15 +124,9 @@ pub fn parse_reply(body: &str) -> Result<String, String> {
 }
 
 /// Run the enrich call. `values_json` is the profile's current values as JSON;
-/// `context` is optional user-supplied information; returns a JSON object
-/// string of variable → filled value.
-pub fn enrich(
-    cfg: &LlmConfig,
-    values_json: &str,
-    vars: &[(String, String)],
-    context: &str,
-) -> Result<String, String> {
-    enrich_at(OPENROUTER_URL, cfg, values_json, vars, context)
+/// returns a JSON object string of variable → filled value.
+pub fn enrich(cfg: &LlmConfig, values_json: &str, inputs: &EnrichInputs) -> Result<String, String> {
+    enrich_at(OPENROUTER_URL, cfg, values_json, inputs)
 }
 
 /// Same as `enrich` but with an injectable endpoint (unit tests point this at a
@@ -96,8 +135,7 @@ pub fn enrich_at(
     url: &str,
     cfg: &LlmConfig,
     values_json: &str,
-    vars: &[(String, String)],
-    context: &str,
+    inputs: &EnrichInputs,
 ) -> Result<String, String> {
     if cfg.api_key.trim().is_empty() {
         return Err("No OpenRouter API key — add one in Settings → AI workflow.".into());
@@ -115,7 +153,7 @@ pub fn enrich_at(
     let payload = json!({
         "model": model,
         "max_tokens": 2048,
-        "messages": build_messages(values_json, vars, context),
+        "messages": build_messages(values_json, inputs),
     });
     let resp = ureq::post(url)
         .timeout(Duration::from_secs(120))
@@ -150,30 +188,59 @@ mod tests {
     use super::*;
 
     fn cfg() -> LlmConfig {
-        LlmConfig { api_key: "sk-or-test".into(), model: "test/model".into(), web_search: false }
+        LlmConfig { api_key: "sk-or-test".into(), model: "test/model".into(), web_search: false, tone: String::new() }
+    }
+
+    fn inputs<'a>(
+        vars: &'a [(String, String)],
+        context: &'a str,
+        usage: &'a str,
+        tone: &'a str,
+    ) -> EnrichInputs<'a> {
+        EnrichInputs { vars, context, usage, tone }
     }
 
     #[test]
-    fn messages_carry_values_descriptions_and_context() {
+    fn messages_carry_values_descriptions_context_usage_and_tone() {
+        let vars = vec![
+            ("companyName".to_string(), "abbreviated lowercase name, e.g. rocketfarm".to_string()),
+            ("firstName".to_string(), String::new()),
+        ];
         let msgs = build_messages(
             r#"{"company":"RocketFarm Studios LLC"}"#,
-            &[
-                ("companyName".into(), "abbreviated lowercase name, e.g. rocketfarm".into()),
-                ("firstName".into(), String::new()),
-            ],
-            "Met Sam at the conference; they're the CTO.",
+            &inputs(
+                &vars,
+                "Met Sam at the conference; they're the CTO.",
+                "### Cold outreach\nHi {{firstName}}, quick one about {{companyName}}…",
+                "Pirate speak, always.",
+            ),
         );
         let sys = msgs[0]["content"].as_str().unwrap();
         assert!(sys.contains("companyName: abbreviated lowercase name"));
         assert!(sys.contains("- firstName\n"));
+        assert!(sys.contains("Tone of voice"));
+        assert!(sys.contains("Pirate speak, always."));
+        assert!(sys.contains("used in the user's templates"));
+        assert!(sys.contains("Hi {{firstName}}, quick one about {{companyName}}"));
         let user = msgs[1]["content"].as_str().unwrap();
         assert!(user.contains("RocketFarm Studios LLC"));
         assert!(user.contains("Met Sam at the conference"));
         assert!(user.contains("Additional information supplied by the user"));
 
-        // No context → no context section.
-        let bare = build_messages("{}", &[], "  ");
+        // No context/usage/tone → no such sections.
+        let bare = build_messages("{}", &inputs(&[], "  ", "", ""));
         assert!(!bare[1]["content"].as_str().unwrap().contains("Additional information"));
+        let sys = bare[0]["content"].as_str().unwrap();
+        assert!(!sys.contains("Tone of voice"));
+        assert!(!sys.contains("used in the user's templates"));
+    }
+
+    #[test]
+    fn tone_resolution_order() {
+        assert_eq!(effective_tone("per-profile pirate", "settings tone"), "per-profile pirate");
+        assert_eq!(effective_tone("  ", "settings tone"), "settings tone");
+        assert_eq!(effective_tone("", ""), DEFAULT_TONE);
+        assert!(DEFAULT_TONE.contains("em dashes"));
     }
 
     #[test]
@@ -208,7 +275,9 @@ mod tests {
 
         let mut nokey = cfg();
         nokey.api_key = String::new();
-        assert!(enrich_at("http://127.0.0.1:1/x", &nokey, "{}", &[], "").unwrap_err().contains("API key"));
+        assert!(enrich_at("http://127.0.0.1:1/x", &nokey, "{}", &inputs(&[], "", "", ""))
+            .unwrap_err()
+            .contains("API key"));
 
         // A fake OpenRouter: drain the request, answer with a chat completion.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -254,12 +323,12 @@ mod tests {
             String::from_utf8_lossy(&data).into_owned()
         });
 
+        let vars = vec![("firstName".to_string(), String::new())];
         let out = enrich_at(
             &format!("http://{addr}/api/v1/chat/completions"),
             &cfg(),
             r#"{"email":"sam@acme.com"}"#,
-            &[("firstName".into(), String::new())],
-            "extra user context rides along",
+            &inputs(&vars, "extra user context rides along", "", DEFAULT_TONE),
         )
         .unwrap();
         let request = handle.join().unwrap();
@@ -277,7 +346,7 @@ mod tests {
     // Run with:  OPENROUTER_KEY=<key> cargo test -- --ignored --nocapture
     fn live_cfg(web: bool) -> Option<LlmConfig> {
         let key = std::env::var("OPENROUTER_KEY").ok()?;
-        Some(LlmConfig { api_key: key, model: "google/gemini-2.5-flash".into(), web_search: web })
+        Some(LlmConfig { api_key: key, model: "google/gemini-2.5-flash".into(), web_search: web, tone: String::new() })
     }
     fn live_vars() -> Vec<(String, String)> {
         vec![
@@ -295,11 +364,11 @@ mod tests {
         let Some(cfg) = live_cfg(false) else {
             panic!("set OPENROUTER_KEY to run the live test");
         };
+        let vars = live_vars();
         let out = enrich(
             &cfg,
             r#"{"company":"Anthropic PBC","email":"sam@anthropic.com"}"#,
-            &live_vars(),
-            "The contact signs their emails as Sam.",
+            &inputs(&vars, "The contact signs their emails as Sam.", "", DEFAULT_TONE),
         )
         .expect("live enrich failed");
         println!("live enrich → {out}");
@@ -317,14 +386,12 @@ mod tests {
             panic!("set OPENROUTER_KEY to run the live test");
         };
         // Web research: the model must look this up (not in the prompt).
+        let vars =
+            vec![("website".to_string(), "the official homepage URL of the company/project".to_string())];
         let out = enrich(
             &cfg,
             r#"{"company":"Tauri (the Rust desktop-app framework)"}"#,
-            &[(
-                "website".into(),
-                "the official homepage URL of the company/project".into(),
-            )],
-            "",
+            &inputs(&vars, "", "", ""),
         )
         .expect("live web-research enrich failed");
         println!("live :online enrich → {out}");

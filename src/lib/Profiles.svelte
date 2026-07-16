@@ -33,8 +33,28 @@
 
   let editingId = $state(null); // null = list, "" = new, <id> = editing
   let name = $state("");
+  let pTone = $state(""); // per-profile tone-of-voice override
   let slots = $state([]);
   let valueMap = $state({});
+
+  // ── Long-value hover: a floating, editable preview beside the cursor ──
+  const LONG_VALUE = 60;
+  let hoverVar = $state(null); // { name, x, y }
+  let hoverTimer;
+  function varEnter(e, varName) {
+    if ((valueMap[varName] || "").length <= LONG_VALUE) return;
+    clearTimeout(hoverTimer);
+    const x = Math.min(e.clientX + 18, window.innerWidth - 400);
+    const y = Math.max(10, Math.min(e.clientY - 30, window.innerHeight - 280));
+    hoverVar = { name: varName, x, y };
+  }
+  function varLeave() {
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => (hoverVar = null), 250);
+  }
+  function hoverKeep() {
+    clearTimeout(hoverTimer);
+  }
 
   let showPaste = $state(false);
   let pasteText = $state("");
@@ -74,12 +94,14 @@
   function newProfile() {
     editingId = "";
     name = "";
+    pTone = "";
     slots = buildSlots({});
     valueMap = seedValues(slots, {});
   }
   function editProfile(p) {
     editingId = p.id;
     name = p.name;
+    pTone = p.tone || "";
     slots = buildSlots(p.values);
     valueMap = seedValues(slots, p.values);
   }
@@ -159,6 +181,7 @@
       name: nm,
       values,
       source: "manual",
+      tone: pTone.trim(),
     });
     onData(data);
     editingId = null;
@@ -255,6 +278,7 @@
       name: p.name,
       values: merged,
       source: p.source || "manual",
+      tone: p.tone || "",
     });
     onData(data);
     flash(`Enriched “${p.name}” (+${Object.keys(obj).length} fields${label ? ` · ${label}` : ""})`);
@@ -312,7 +336,7 @@
       ]
         .filter(Boolean)
         .join("\n\n");
-      const body = await llmEnrich(JSON.stringify(p.values), ctx, aiWeb);
+      const body = await llmEnrich(JSON.stringify(p.values), ctx, aiWeb, p.tone || "");
       const obj = parseObj(body);
       if (!obj || !Object.keys(obj).length) {
         flash("The AI returned no fields");
@@ -521,6 +545,13 @@
           placeholder="e.g. Client ACME"
         /></label
       >
+      <label class="wlabel"
+        >Tone of voice — optional, overrides Settings for this profile's AI text<input
+          class="field"
+          bind:value={pTone}
+          placeholder="e.g. Formal and precise; write in Dutch; never use exclamation marks"
+        /></label
+      >
 
       <div class="editor">
         {#each slots as s, i (s._id)}
@@ -558,6 +589,8 @@
                 class="field vval"
                 bind:value={valueMap[s.name]}
                 placeholder="value"
+                onmouseenter={(e) => varEnter(e, s.name)}
+                onmouseleave={varLeave}
               />
             {/if}
             <button
@@ -581,6 +614,21 @@
     </div>
   {/if}
 </div>
+
+{#if hoverVar}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="hoverpanel"
+    style:left="{hoverVar.x}px"
+    style:top="{hoverVar.y}px"
+    onmouseenter={hoverKeep}
+    onmouseleave={varLeave}
+  >
+    <span class="hp-name">{hoverVar.name}</span>
+    <textarea class="field hp-text" rows="9" bind:value={valueMap[hoverVar.name]}></textarea>
+    <span class="hp-hint">Edits apply live — remember to Save profile.</span>
+  </div>
+{/if}
 
 {#if aiPanel}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -888,6 +936,37 @@
   .editor-actions {
     display: flex;
     gap: 8px;
+  }
+
+  /* ── Long-value hover editor ── */
+  .hoverpanel {
+    position: fixed;
+    z-index: 65;
+    width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .hp-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-strong);
+  }
+  .hp-text {
+    resize: vertical;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.55;
+    min-height: 120px;
+  }
+  .hp-hint {
+    font-size: 11px;
+    color: var(--faint);
   }
 
   /* ── Castline AI enrich dialog ── */

@@ -128,8 +128,18 @@ and pick a model. Choosing **Castline AI** opens a small dialog where you can ad
 that run — OpenRouter's `:online` mode works with *any* model, so no separate research model is needed.
 The call sends the profile's current values plus the **variable descriptions** you write in
 **Settings → Variables** — e.g. describing `{{companyName}}` as *"simplified lowercase company name:
-'RocketFarm Studios LLC' → 'rocketfarm'"* makes every enrichment come back in exactly that shape. The
-same descriptions are baked into the agent's `CLAUDE.md`.
+'RocketFarm Studios LLC' → 'rocketfarm'"* makes every enrichment come back in exactly that shape — and
+the **templates where the variables are used**, so generated text (like an icebreaker) reads naturally
+in place. The same descriptions are baked into the agent's `CLAUDE.md`.
+
+**Tone of voice:** generated text follows Castline's default tone (casual, charismatic, straight to the
+point, never em dashes) unless you customise it in **Settings → AI workflow**; a profile can override it
+with its own tone (e.g. "formal, in Dutch") in the profile editor.
+
+**Profile-aware everywhere:** with a profile selected in the top bar, card **Copy**/**send** buttons get
+an accent border (variables are filled), **Fill & copy** becomes **Preview** — filled variables glow
+accent, empty ones show dashed — and both the preview and per-item webhook sends carry the **filled**
+text plus the profile's values (so `{{email}}` etc. are usable by your automation).
 
 ## Inbound HTTP endpoints → push profiles in (Make / n8n HTTP module)
 
