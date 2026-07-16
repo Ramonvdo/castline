@@ -39,7 +39,13 @@
   async function importLibrary(mode) {
     const path = await pickOpenFile();
     if (!path) return;
-    if (mode === "replace" && !confirm("Replace your entire library with this file? This cannot be undone.")) return;
+    if (
+      mode === "replace" &&
+      !confirm(
+        "Replace your entire library with this file? This cannot be undone.",
+      )
+    )
+      return;
     try {
       onLibraryData(await importLibraryFrom(path, mode));
       flash(mode === "replace" ? "Library replaced" : "Library merged");
@@ -60,7 +66,8 @@
   async function importProfiles(mode) {
     const path = await pickOpenFile();
     if (!path) return;
-    if (mode === "replace" && !confirm("Replace all profiles with this file?")) return;
+    if (mode === "replace" && !confirm("Replace all profiles with this file?"))
+      return;
     try {
       onProfilesData(await importProfilesFrom(path, mode));
       flash(mode === "replace" ? "Profiles replaced" : "Profiles merged");
@@ -71,38 +78,46 @@
 </script>
 
 <div class="view">
-  <div class="view-head"><h2>Settings</h2></div>
-
   <section class="panel">
     <h4>Data & backups</h4>
     <div class="loc">
       <code class="path">{dataDir || "…"}</code>
-      <button class="ghost" onclick={reveal}><Icon name="folderOpen" size={15} /> Open folder</button>
+      <button class="ghost" onclick={reveal}
+        ><Icon name="folderOpen" size={15} /> Open folder</button
+      >
     </div>
     <div class="grid2">
       <div class="stack">
         <strong>Library</strong>
         <div class="row-btns">
           <button class="ghost" onclick={exportLibrary}>Export</button>
-          <button class="ghost" onclick={() => importLibrary("merge")}>Import (merge)</button>
-          <button class="ghost" onclick={() => importLibrary("replace")}>Import (replace)</button>
+          <button class="ghost" onclick={() => importLibrary("merge")}
+            >Import (merge)</button
+          >
+          <button class="ghost" onclick={() => importLibrary("replace")}
+            >Import (replace)</button
+          >
         </div>
       </div>
       <div class="stack">
         <strong>Profiles</strong>
         <div class="row-btns">
           <button class="ghost" onclick={exportProfiles}>Export</button>
-          <button class="ghost" onclick={() => importProfiles("merge")}>Import (merge)</button>
-          <button class="ghost" onclick={() => importProfiles("replace")}>Import (replace)</button>
+          <button class="ghost" onclick={() => importProfiles("merge")}
+            >Import (merge)</button
+          >
+          <button class="ghost" onclick={() => importProfiles("replace")}
+            >Import (replace)</button
+          >
         </div>
       </div>
     </div>
   </section>
 
   <section class="panel about">
-    <h4>About</h4>
-    <p>Castline — a local-first library for prompts, templates, notes &amp; SOPs. Your data lives in
-      portable JSON files on this machine. No account, no cloud, no telemetry.</p>
+    <p>
+      <strong>Note: </strong> Your data lives in portable JSON files on this machine.
+    </p>
   </section>
 </div>
 

@@ -37,6 +37,10 @@ export const setConnectors = (connectors) => invoke("set_connectors", { connecto
 // POST bodyJson to a Make/n8n webhook URL; resolves to { status, body }.
 export const connectorSend = (url, bodyJson) => invoke("connector_send", { url, body: bodyJson });
 
+// ── Inbound HTTP endpoint (Make/n8n HTTP module → profile) ──
+export const httpStatus = () => invoke("http_status");
+export const setHttpEndpoint = (enabled, port) => invoke("set_http_endpoint", { enabled, port });
+
 // ── Import / export / reveal ──
 export const getDataDir = () => invoke("get_data_dir");
 export const revealDataDir = () => invoke("reveal_data_dir");
@@ -47,8 +51,20 @@ export const importProfilesFrom = (path, mode) => invoke("import_profiles_from",
 // Write arbitrary text to a path (used by "Export selected → .md").
 export const saveTextFile = (path, contents) => invoke("save_text_file", { path, contents });
 
+// ── AI agent (embedded Claude Code terminal) ──
+export const aiStatus = () => invoke("ai_status");
+export const aiStart = (rows, cols) => invoke("ai_start", { rows, cols });
+export const aiInput = (data) => invoke("ai_input", { data });
+export const aiResize = (rows, cols) => invoke("ai_resize", { rows, cols });
+export const aiStop = () => invoke("ai_stop");
+export const refreshAgentContext = () => invoke("refresh_agent_context");
+export const setAiConfig = (claudePath, extraArgs) => invoke("set_ai_config", { claudePath, extraArgs });
+
 // ── Live events from the Rust side ──
 export const onProfilesChanged = (cb) => listen("profiles-changed", (e) => cb(e.payload));
+export const onLibraryChanged = (cb) => listen("library-changed", (e) => cb(e.payload));
+export const onAiOutput = (cb) => listen("ai-output", (e) => cb(e.payload));
+export const onAiExit = (cb) => listen("ai-exit", (e) => cb(e.payload));
 
 // ── Native file dialogs ──
 const JSON_FILTER = [{ name: "Castline JSON", extensions: ["json"] }];

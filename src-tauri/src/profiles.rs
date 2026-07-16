@@ -117,6 +117,29 @@ pub fn delete_profile(data: &mut ProfilesData, id: &str) {
     data.profiles.retain(|p| p.id != id);
 }
 
+/// Merge `incoming.values` into an **existing** profile, matched by name
+/// (case-insensitive) or by a shared `email` value. Returns the matched
+/// profile's name, or `None` when nothing matches. Used by the inbound
+/// `/api/update-profile` endpoint (enrichment).
+pub fn enrich_existing(data: &mut ProfilesData, incoming: &Profile) -> Option<String> {
+    let want_name = incoming.name.trim().to_ascii_lowercase();
+    let want_email =
+        incoming.values.get("email").map(|e| e.trim().to_ascii_lowercase()).filter(|e| !e.is_empty());
+
+    let target = data.profiles.iter_mut().find(|p| {
+        (!want_name.is_empty() && p.name.trim().to_ascii_lowercase() == want_name)
+            || match (&want_email, p.values.get("email")) {
+                (Some(w), Some(have)) => have.trim().to_ascii_lowercase() == *w,
+                _ => false,
+            }
+    })?;
+
+    for (k, v) in &incoming.values {
+        target.values.insert(k.clone(), v.clone());
+    }
+    Some(target.name.clone())
+}
+
 /// Replace the global variable layout (presentation only — never touches values).
 pub fn set_layout(data: &mut ProfilesData, layout: Vec<LayoutEntry>) {
     data.layout = layout;
@@ -188,6 +211,44 @@ mod tests {
         assert_eq!(d.layout[0].label, "Contact");
         assert_eq!(d.layout[1].name, "firstName");
         assert_eq!(d.profiles[0].values.get("firstName").unwrap(), "Sam");
+    }
+
+    fn profile(name: &str, kv: &[(&str, &str)]) -> Profile {
+        let mut values = BTreeMap::new();
+        for (k, v) in kv {
+            values.insert((*k).into(), (*v).into());
+        }
+        Profile { id: gen_id(), name: name.into(), values, source: "manual".into() }
+    }
+
+    #[test]
+    fn enrich_matches_by_name_case_insensitive() {
+        let mut d = ProfilesData::default();
+        d.profiles.push(profile("Sam Rivera", &[("company", "Acme")]));
+        let incoming = profile("sam rivera", &[("phone", "+1 555 0100"), ("company", "Globex")]);
+        let matched = enrich_existing(&mut d, &incoming).unwrap();
+        assert_eq!(matched, "Sam Rivera");
+        assert_eq!(d.profiles[0].values.get("phone").unwrap(), "+1 555 0100");
+        assert_eq!(d.profiles[0].values.get("company").unwrap(), "Globex"); // overwritten
+    }
+
+    #[test]
+    fn enrich_matches_by_email_when_name_differs() {
+        let mut d = ProfilesData::default();
+        d.profiles.push(profile("Old Name", &[("email", "sam@acme.com")]));
+        let mut incoming = profile("Totally Different", &[("title", "CTO")]);
+        incoming.values.insert("email".into(), "SAM@ACME.COM".into());
+        let matched = enrich_existing(&mut d, &incoming).unwrap();
+        assert_eq!(matched, "Old Name");
+        assert_eq!(d.profiles[0].values.get("title").unwrap(), "CTO");
+    }
+
+    #[test]
+    fn enrich_returns_none_without_a_match() {
+        let mut d = ProfilesData::default();
+        d.profiles.push(profile("Sam", &[("email", "sam@acme.com")]));
+        let incoming = profile("Nobody", &[("email", "nobody@else.com")]);
+        assert!(enrich_existing(&mut d, &incoming).is_none());
     }
 
     #[test]

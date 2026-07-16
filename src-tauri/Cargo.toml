@@ -28,6 +28,14 @@ dirs = "6"
 # Outbound connectors: a small blocking HTTPS client to POST to a Make/n8n
 # webhook and read the response (rustls TLS via ureq's default features).
 ureq = "2"
+# Inbound HTTP endpoints: a tiny loopback server a Make/n8n HTTP module POSTs to
+# (Create / Update profile). Small, synchronous, no async runtime.
+tiny_http = "0.12"
+
+# Embedded AI agent: a real PTY (ConPTY on Windows) to run the user's `claude`
+# CLI, and a file-watcher so external/agent edits to the JSON stores reload live.
+portable-pty = "0.9"
+notify = "6"
 
 [dev-dependencies]
 tempfile = "3"

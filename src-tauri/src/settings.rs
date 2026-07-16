@@ -19,6 +19,35 @@ pub struct Connector {
     pub url: String,
 }
 
+/// The inbound HTTP endpoint: a loopback server a Make/n8n HTTP module POSTs to
+/// (`/api/create-profile`, `/api/update-profile`). Token-gated, off by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub token: String,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self { enabled: false, port: default_port(), token: String::new() }
+    }
+}
+
+/// Settings for the embedded AI agent (the "Agent" tab running Claude Code).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AiConfig {
+    /// Explicit path to the `claude` binary; empty = auto-detect on PATH.
+    #[serde(default)]
+    pub claude_path: String,
+    /// Extra arguments appended to the `claude` invocation.
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     /// Reserved for forward-compat; Castline ships one fixed dark theme.
@@ -26,16 +55,36 @@ pub struct AppSettings {
     pub theme: String,
     #[serde(default)]
     pub connectors: Vec<Connector>,
+    #[serde(default)]
+    pub http: HttpConfig,
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
-        Self { theme: default_theme(), connectors: Vec::new() }
+        Self {
+            theme: default_theme(),
+            connectors: Vec::new(),
+            http: HttpConfig::default(),
+            ai: AiConfig::default(),
+        }
     }
 }
 
 fn default_theme() -> String {
     "dark".into()
+}
+
+fn default_port() -> u16 {
+    8787
+}
+
+/// Give the endpoint a long random bearer token when it's first switched on.
+pub fn ensure_http_token(http: &mut HttpConfig) {
+    if http.token.trim().is_empty() {
+        http.token = format!("{}{}", gen_id(), gen_id());
+    }
 }
 
 /// Give every connector a stable id (called whenever connectors are saved).
@@ -120,5 +169,22 @@ mod tests {
         let s: AppSettings = serde_json::from_str(json).unwrap();
         assert_eq!(s.theme, "dark");
         assert!(s.connectors.is_empty());
+        // New http/ai sections default in cleanly for old files.
+        assert!(!s.http.enabled);
+        assert_eq!(s.http.port, 8787);
+        assert!(s.http.token.is_empty());
+        assert!(s.ai.claude_path.is_empty());
+    }
+
+    #[test]
+    fn ensure_http_token_fills_once() {
+        let mut http = HttpConfig::default();
+        assert!(http.token.is_empty());
+        ensure_http_token(&mut http);
+        let first = http.token.clone();
+        assert!(first.len() > 16);
+        // Idempotent: a second call keeps the existing token.
+        ensure_http_token(&mut http);
+        assert_eq!(http.token, first);
     }
 }

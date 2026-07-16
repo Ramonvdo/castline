@@ -4,11 +4,12 @@
   import QuickOpen from "./lib/QuickOpen.svelte";
   import Profiles from "./lib/Profiles.svelte";
   import Connectors from "./lib/Connectors.svelte";
+  import Agent from "./lib/Agent.svelte";
   import Settings from "./lib/Settings.svelte";
   import FillCopy from "./lib/FillCopy.svelte";
   import Icon from "./lib/Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { getLibrary, getProfiles, getSettings, onProfilesChanged } from "./lib/api.js";
+  import { getLibrary, getProfiles, getSettings, onProfilesChanged, onLibraryChanged } from "./lib/api.js";
 
   const appWindow = getCurrentWindow();
   const winMinimize = () => appWindow.minimize();
@@ -19,7 +20,7 @@
   let profiles = $state({ profiles: [], layout: [] });
   let settings = $state({ theme: "dark", connectors: [] });
 
-  let view = $state("library"); // library | profiles | connectors | settings
+  let view = $state("library"); // library | profiles | connectors | agent | settings
   let quickOpen = $state(false);
   let fillItem = $state(null);
   let fillMode = $state("auto"); // auto | steps
@@ -56,6 +57,9 @@
       profiles = await getProfiles();
       flash("New profile received");
     });
+    const unLib = await onLibraryChanged(async () => {
+      library = await getLibrary();
+    });
 
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -70,6 +74,7 @@
     return () => {
       window.removeEventListener("keydown", onKey);
       un();
+      unLib();
     };
   });
 
@@ -83,6 +88,7 @@
     { id: "library", label: "Library", icon: "layers" },
     { id: "profiles", label: "Profiles", icon: "user" },
     { id: "connectors", label: "Connectors", icon: "plug" },
+    { id: "agent", label: "Agent", icon: "terminal" },
     { id: "settings", label: "Settings", icon: "sliders" },
   ];
 </script>
@@ -154,6 +160,10 @@
     {:else if view === "settings"}
       <Settings {flash} onLibraryData={(d) => (library = d)} onProfilesData={(d) => (profiles = d)} />
     {/if}
+    <!-- Agent stays mounted so the terminal survives tab switches -->
+    <div class="agent-wrap" style:display={view === "agent" ? "block" : "none"}>
+      <Agent active={view === "agent"} />
+    </div>
   </main>
 </div>
 
@@ -360,6 +370,9 @@
   .body {
     flex: 1;
     min-height: 0;
+  }
+  .agent-wrap {
+    height: 100%;
   }
   .toast {
     position: fixed;

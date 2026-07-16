@@ -1,6 +1,13 @@
 <script>
   import { onMount } from "svelte";
-  import { getSettings, setConnectors, connectorSend, clipCopy } from "./api.js";
+  import {
+    getSettings,
+    setConnectors,
+    connectorSend,
+    clipCopy,
+    httpStatus,
+    setHttpEndpoint,
+  } from "./api.js";
   import { allLibraryVars } from "./vars.js";
   import Icon from "./Icon.svelte";
 
@@ -13,15 +20,86 @@
   let libVars = $derived(allLibraryVars(folders));
 
   function clone(list) {
-    return (list || []).map((c) => ({ _uid: nextUid(), id: c.id || "", name: c.name || "", url: c.url || "" }));
+    return (list || []).map((c) => ({
+      _uid: nextUid(),
+      id: c.id || "",
+      name: c.name || "",
+      url: c.url || "",
+    }));
   }
   let rc = $state(clone(connectors));
   let tests = $state({}); // _uid -> { status, body, error, sent }
 
+  // ── Inbound HTTP endpoint ──
+  let http = $state({
+    enabled: false,
+    port: 8787,
+    active: false,
+    token: "",
+    baseUrl: "http://127.0.0.1:8787",
+  });
+  let httpTests = $state({}); // action id -> { status, body, error, pending }
+  const HTTP_ACTIONS = [
+    {
+      id: "create-profile",
+      title: "Create profile",
+      desc: "Makes a brand-new profile from the JSON body.",
+    },
+    {
+      id: "update-profile",
+      title: "Update / enrich profile",
+      desc: "Merges the JSON into an existing profile matched by name or email.",
+    },
+  ];
+
   onMount(async () => {
     const s = await getSettings();
     rc = clone(s.connectors || []);
+    http = await httpStatus();
   });
+
+  async function toggleHttp() {
+    await setHttpEndpoint(!http.enabled, Number(http.port) || 8787);
+    http = await httpStatus();
+    flash(http.enabled ? "HTTP endpoint on" : "HTTP endpoint off");
+  }
+  async function applyPort() {
+    await setHttpEndpoint(http.enabled, Number(http.port) || 8787);
+    http = await httpStatus();
+    flash("Port saved");
+  }
+  const actionUrl = (id) => `${http.baseUrl}/api/${id}`;
+  const headerLines = () =>
+    `Content-Type: application/json\nAuthorization: Bearer ${http.token}`;
+  function actionBody(id) {
+    const obj = JSON.parse(exampleJson());
+    // Update needs an identifier — make sure a name (or email) is present + first.
+    if (id === "update-profile" && !obj.name && !obj.email) {
+      return JSON.stringify(
+        { name: obj.full_name || "Sam Rivera", ...obj },
+        null,
+        2,
+      );
+    }
+    return JSON.stringify(obj, null, 2);
+  }
+  async function testHttp(id) {
+    if (!http.enabled) {
+      flash("Enable the endpoint first");
+      return;
+    }
+    httpTests = { ...httpTests, [id]: { pending: true } };
+    try {
+      const url = `${actionUrl(id)}?token=${encodeURIComponent(http.token)}`;
+      const res = await connectorSend(url, actionBody(id));
+      httpTests = {
+        ...httpTests,
+        [id]: { status: res.status, body: res.body, error: "" },
+      };
+    } catch (e) {
+      httpTests = { ...httpTests, [id]: { error: String(e) } };
+    }
+  }
 
   function addConnector() {
     rc = [...rc, { _uid: nextUid(), id: "", name: "New connector", url: "" }];
@@ -48,7 +126,9 @@
     return "value";
   }
   function exampleJson() {
-    const keys = libVars.length ? libVars : ["first_name", "last_name", "email"];
+    const keys = libVars.length
+      ? libVars
+      : ["first_name", "last_name", "email"];
     const obj = {};
     for (const k of keys) obj[k] = sampleValue(k);
     return JSON.stringify(obj, null, 2);
@@ -73,7 +153,10 @@
     tests = { ...tests, [c._uid]: { pending: true, sent } };
     try {
       const res = await connectorSend(c.url, sent);
-      tests = { ...tests, [c._uid]: { status: res.status, body: res.body, sent, error: "" } };
+      tests = {
+        ...tests,
+        [c._uid]: { status: res.status, body: res.body, sent, error: "" },
+      };
     } catch (e) {
       tests = { ...tests, [c._uid]: { error: String(e), sent } };
     }
@@ -82,35 +165,53 @@
 
 <div class="view">
   <div class="view-head">
-    <h2>Connectors</h2>
+    <h3>
+      Webhooks <span class="tag">outbound</span>
+    </h3>
     <button class="btn" onclick={saveAll}>Save</button>
   </div>
-  <p class="sub">
-    Paste a <strong>Make / n8n webhook URL</strong>. Castline POSTs a profile's fields to it and reads the
-    JSON your scenario returns (Make <em>Webhook response</em> / n8n <em>Respond to Webhook</em>) — so you
-    map fields inside Make/n8n, and there's no tunnel or open port. Run a connector from a profile
-    (<strong>Enrich</strong>) or via <strong>New from connector</strong> in Profiles.
-  </p>
+  <p class="sub"></p>
 
   {#each rc as c, i (c._uid)}
     {@const t = tests[c._uid]}
     <div class="panel">
       <div class="c-head">
-        <input class="field cname" bind:value={c.name} placeholder="Connector name" />
-        <button class="icon-btn" title="Delete connector" onclick={() => removeConnector(i)}><Icon name="trash" size={15} /></button>
+        <input
+          class="field cname"
+          bind:value={c.name}
+          placeholder="Connector name"
+        />
+        <button
+          class="icon-btn"
+          title="Delete connector"
+          onclick={() => removeConnector(i)}
+          ><Icon name="trash" size={15} /></button
+        >
       </div>
 
       <label class="fld">
-        <span class="rlabel">Webhook URL (from Make / n8n)</span>
-        <input class="field" bind:value={c.url} placeholder="https://hook.eu2.make.com/…" />
+        <span class="rlabel">Webhook URL</span>
+        <input
+          class="field"
+          bind:value={c.url}
+          placeholder="https://hook.eu2.make.com/…"
+        />
       </label>
 
       <div class="example">
         <div class="ex-head">
-          <span class="rlabel">Castline sends these fields — map them in Make / n8n</span>
+          <span class="rlabel"
+            >Castline sends these fields — map them in Make / n8n</span
+          >
           <div class="ex-actions">
-            <button class="ghost sm" onclick={() => copyText(exampleJson(), "Example payload copied")}><Icon name="copy" size={14} /> Copy</button>
-            <button class="ghost sm" onclick={() => runTest(c)}><Icon name="check" size={14} /> Test</button>
+            <button
+              class="ghost sm"
+              onclick={() => copyText(exampleJson(), "Example payload copied")}
+              ><Icon name="copy" size={14} /> Copy</button
+            >
+            <button class="ghost sm" onclick={() => runTest(c)}
+              ><Icon name="check" size={14} /> Test</button
+            >
           </div>
         </div>
         <pre class="code">{exampleJson()}</pre>
@@ -121,11 +222,19 @@
           <p class="err">{t.error}</p>
         {:else if t}
           <div class="resp">
-            <span class="rlabel">Response <span class="badge-n" class:ok={t.status >= 200 && t.status < 300}>{t.status}</span></span>
+            <span class="rlabel"
+              >Response <span
+                class="badge-n"
+                class:ok={t.status >= 200 && t.status < 300}>{t.status}</span
+              ></span
+            >
             {#if t.body}
               <pre class="code resp-body">{prettyBody(t.body)}</pre>
             {:else}
-              <p class="tiny">No response body — add a "Webhook response" / "Respond to Webhook" module to return data.</p>
+              <p class="tiny">
+                No response body — add a "Webhook response" / "Respond to
+                Webhook" module to return data.
+              </p>
             {/if}
           </div>
         {/if}
@@ -133,7 +242,143 @@
     </div>
   {/each}
 
-  <button class="ghost add" onclick={addConnector}><Icon name="plus" size={15} /> Add connector</button>
+  <button class="ghost add" onclick={addConnector}
+    ><Icon name="plus" size={15} /> Add connector</button
+  >
+
+  <!-- ── Inbound HTTP endpoint ── -->
+  <section class="http">
+    <div class="http-head">
+      <div class="hh-left">
+        <h3>
+          HTTP endpoint <span class="tag">inbound</span>
+          <span
+            class="dot"
+            class:on={http.active}
+            title={http.active ? "listening" : "off"}
+          ></span>
+        </h3>
+        <p class="sub2"></p>
+      </div>
+      <label class="switch">
+        <input type="checkbox" checked={http.enabled} onchange={toggleHttp} />
+        <span class="track"><span class="knob"></span></span>
+        <span class="swlabel">{http.enabled ? "On" : "Off"}</span>
+      </label>
+    </div>
+
+    {#if http.enabled}
+      <div class="portrow">
+        <span class="rlabel">Port</span>
+        <input
+          class="field port"
+          type="number"
+          bind:value={http.port}
+          min="1024"
+          max="65535"
+        />
+        <button class="ghost sm" onclick={applyPort}>Apply</button>
+      </div>
+
+      {#each HTTP_ACTIONS as a}
+        {@const ht = httpTests[a.id]}
+        <div class="action">
+          <div class="a-head">
+            <span class="a-title">{a.title}</span>
+            <button class="ghost sm" onclick={() => testHttp(a.id)}
+              ><Icon name="check" size={14} /> Test locally</button
+            >
+          </div>
+          <p class="tiny">
+            {a.desc}
+            <span class="paste"
+              >Paste this into a Make HTTP module (or n8n HTTP Request node):</span
+            >
+          </p>
+
+          <div class="kv">
+            <span class="k">Method</span>
+            <code class="v">POST</code>
+            <button
+              class="icon-btn xs"
+              title="Copy"
+              onclick={() => copyText("POST", "Method copied")}
+              ><Icon name="copy" size={13} /></button
+            >
+          </div>
+          <div class="kv">
+            <span class="k">URL</span>
+            <code class="v url">{actionUrl(a.id)}</code>
+            <button
+              class="icon-btn xs"
+              title="Copy"
+              onclick={() => copyText(actionUrl(a.id), "URL copied")}
+              ><Icon name="copy" size={13} /></button
+            >
+          </div>
+          <div class="kv">
+            <span class="k">Headers</span>
+            <code class="v pre">{headerLines()}</code>
+            <button
+              class="icon-btn xs"
+              title="Copy"
+              onclick={() => copyText(headerLines(), "Headers copied")}
+              ><Icon name="copy" size={13} /></button
+            >
+          </div>
+          <div class="kv col">
+            <div class="kv-top">
+              <span class="k">Body · Raw / JSON</span>
+              <button
+                class="ghost sm"
+                onclick={() => copyText(actionBody(a.id), "Body copied")}
+                ><Icon name="copy" size={13} /> Copy</button
+              >
+            </div>
+            <pre class="code">{actionBody(a.id)}</pre>
+          </div>
+
+          {#if ht?.pending}
+            <p class="tiny">Sending…</p>
+          {:else if ht?.error}
+            <p class="err">{ht.error}</p>
+          {:else if ht}
+            <div class="resp">
+              <span class="rlabel"
+                >Response <span
+                  class="badge-n"
+                  class:ok={ht.status >= 200 && ht.status < 300}
+                  >{ht.status}</span
+                ></span
+              >
+              {#if ht.body}<pre class="code resp-body">{prettyBody(
+                    ht.body,
+                  )}</pre>{/if}
+            </div>
+          {/if}
+        </div>
+      {/each}
+
+      <div class="reach">
+        <Icon name="info" size={15} />
+        <p class="tiny">
+          The endpoint binds <code>127.0.0.1</code> and is token-gated. A
+          <strong>self-hosted n8n</strong>
+          on this machine/LAN can call it directly. <strong>Make cloud</strong>
+          (or any internet scenario) can't see localhost — run a tunnel (<strong
+            >ngrok</strong
+          >
+          / <strong>Cloudflare Tunnel</strong>) and use that URL in place of
+          <code>127.0.0.1:{http.port}</code>.
+        </p>
+      </div>
+    {:else}
+      <p class="tiny off-hint">
+        Turn it on to get a token and the exact HTTP-module config for Create /
+        Update profile.
+      </p>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -261,5 +506,214 @@
     justify-content: center;
     padding: 11px;
     border-style: dashed;
+  }
+
+  /* ── Inbound HTTP endpoint ── */
+  .http {
+    margin-top: 30px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border-strong);
+  }
+  .http-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .hh-left h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tag {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 6px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--faint);
+  }
+  .dot.on {
+    background: #6fb894;
+    box-shadow: 0 0 0 3px color-mix(in srgb, #6fb894 22%, transparent);
+  }
+  .sub2 {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 6px 0 0;
+    max-width: 560px;
+  }
+  .sub2 strong {
+    color: var(--text);
+  }
+  /* Toggle switch */
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    user-select: none;
+  }
+  .switch input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .track {
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
+    background: var(--well);
+    border: 1px solid var(--border-strong);
+    position: relative;
+    transition:
+      background 0.15s var(--ease),
+      border-color 0.15s var(--ease);
+  }
+  .knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition:
+      transform 0.15s var(--ease),
+      background 0.15s var(--ease);
+  }
+  .switch input:checked + .track {
+    background: var(--btn-accent);
+    border-color: color-mix(in srgb, var(--accent) 55%, #000);
+  }
+  .switch input:checked + .track .knob {
+    transform: translateX(16px);
+    background: var(--on-accent);
+  }
+  .swlabel {
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 20px;
+  }
+  .portrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .port {
+    width: 110px;
+  }
+  .action {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--edge);
+    padding: 14px;
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .a-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .a-title {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .paste {
+    color: var(--faint);
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 74px 1fr auto;
+    align-items: center;
+    gap: 10px;
+  }
+  .kv.col {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .kv-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .k {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .v {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .v.pre {
+    white-space: pre;
+    line-height: 1.5;
+  }
+  .v.url {
+    color: var(--accent-strong);
+  }
+  .icon-btn.xs {
+    padding: 5px;
+  }
+  .reach {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    margin-top: 14px;
+    padding: 11px 12px;
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+    border-radius: var(--radius-sm);
+    color: var(--accent-strong);
+  }
+  .reach :global(.ic) {
+    margin-top: 1px;
+    flex-shrink: 0;
+  }
+  .reach .tiny {
+    color: var(--muted);
+  }
+  .reach code,
+  .sub2 code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    color: var(--text);
+  }
+  .off-hint {
+    margin-top: 14px;
   }
 </style>

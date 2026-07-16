@@ -21,7 +21,15 @@
   import { FOLDER_ICON_NAMES, FOLDER_COLORS } from "./foldericons.js";
 
   // props (library is bindable so imports/webhook refreshes from the parent flow in)
-  let { library = $bindable(), profiles = [], layout = [], activeProfile = null, compact = false, flash, onFill } = $props();
+  let {
+    library = $bindable(),
+    profiles = [],
+    layout = [],
+    activeProfile = null,
+    compact = false,
+    flash,
+    onFill,
+  } = $props();
 
   const ALL = "__all";
   const FAV = "__fav";
@@ -31,7 +39,9 @@
   let selectedTags = $state([]);
 
   let realFolders = $derived(library.folders || []);
-  let activeFolder = $derived(realFolders.find((f) => f.id === activeId) || null);
+  let activeFolder = $derived(
+    realFolders.find((f) => f.id === activeId) || null,
+  );
   let isVirtual = $derived(activeId === ALL || activeId === FAV);
 
   // Every item in the current scope, tagged with its folder for context.
@@ -41,7 +51,13 @@
       if (!isVirtual && f.id !== activeId) continue;
       for (const i of f.items || []) {
         if (activeId === FAV && !i.favorite) continue;
-        out.push({ item: i, folderId: f.id, folderName: f.name, folderColor: f.color, folderIcon: f.icon });
+        out.push({
+          item: i,
+          folderId: f.id,
+          folderName: f.name,
+          folderColor: f.color,
+          folderIcon: f.icon,
+        });
       }
     }
     return out;
@@ -50,7 +66,8 @@
   // Tags present in the current scope, for the filter chips.
   let scopeTags = $derived.by(() => {
     const set = new Set();
-    for (const e of scopedEntries) for (const t of e.item.tags || []) set.add(t);
+    for (const e of scopedEntries)
+      for (const t of e.item.tags || []) set.add(t);
     return [...set].sort();
   });
 
@@ -58,29 +75,40 @@
     const q = search.trim().toLowerCase();
     let list = scopedEntries;
     if (q) {
-      list = list.filter(({ item: i }) =>
-        i.name.toLowerCase().includes(q) ||
-        (i.text || "").toLowerCase().includes(q) ||
-        (i.item_type || "").toLowerCase().includes(q) ||
-        (i.steps || []).some((s) => s.title.toLowerCase().includes(q) || s.text.toLowerCase().includes(q)) ||
-        (i.tags || []).some((t) => t.toLowerCase().includes(q)),
+      list = list.filter(
+        ({ item: i }) =>
+          i.name.toLowerCase().includes(q) ||
+          (i.text || "").toLowerCase().includes(q) ||
+          (i.item_type || "").toLowerCase().includes(q) ||
+          (i.steps || []).some(
+            (s) =>
+              s.title.toLowerCase().includes(q) ||
+              s.text.toLowerCase().includes(q),
+          ) ||
+          (i.tags || []).some((t) => t.toLowerCase().includes(q)),
       );
     }
     if (selectedTags.length) {
-      list = list.filter(({ item: i }) => (i.tags || []).some((t) => selectedTags.includes(t)));
+      list = list.filter(({ item: i }) =>
+        (i.tags || []).some((t) => selectedTags.includes(t)),
+      );
     }
     // A real folder keeps its manual (stored) order so drag-reorder is honoured;
     // the All / Favorites views sort favourites-first then by name.
     if (isVirtual) {
       return [...list].sort(
-        (a, b) => Number(b.item.favorite) - Number(a.item.favorite) || a.item.name.localeCompare(b.item.name),
+        (a, b) =>
+          Number(b.item.favorite) - Number(a.item.favorite) ||
+          a.item.name.localeCompare(b.item.name),
       );
     }
     return list;
   });
 
   function toggleTag(t) {
-    selectedTags = selectedTags.includes(t) ? selectedTags.filter((x) => x !== t) : [...selectedTags, t];
+    selectedTags = selectedTags.includes(t)
+      ? selectedTags.filter((x) => x !== t)
+      : [...selectedTags, t];
   }
 
   // ── Folder create/edit modal (name + icon + colour) ──
@@ -104,13 +132,32 @@
   }
   function openEditFolder() {
     if (!activeFolder) return;
+    openEditFolderById(activeFolder.id);
+  }
+  // Edit any folder by id (used by the folder rail's right-click menu). Pass
+  // { confirmDelete:true } to open straight on the delete confirmation.
+  function openEditFolderById(id, opts = {}) {
+    const f = library.folders.find((x) => x.id === id);
+    if (!f) return;
     fmMode = "edit";
-    fmId = activeFolder.id;
-    fmName = activeFolder.name;
-    fmIcon = activeFolder.icon || "folder";
-    fmColor = activeFolder.color || "";
-    fmConfirmDelete = false;
+    fmId = f.id;
+    fmName = f.name;
+    fmIcon = f.icon || "folder";
+    fmColor = f.color || "";
+    fmConfirmDelete = !!opts.confirmDelete;
     folderModalOpen = true;
+  }
+
+  // Right-click context menu on a rail folder.
+  let folderMenu = $state(null); // { id, x, y }
+  function openFolderMenu(e, id) {
+    e.preventDefault();
+    folderMenu = { id, x: e.clientX, y: e.clientY };
+  }
+  function menuAction(fn) {
+    const id = folderMenu?.id;
+    folderMenu = null;
+    if (id) fn(id);
   }
   async function saveFolder() {
     const name = fmName.trim();
@@ -223,7 +270,9 @@
     fKind === "sop"
       ? (() => {
           const all = [];
-          for (const s of fSteps) for (const v of extractVars(s.text)) if (!all.includes(v)) all.push(v);
+          for (const s of fSteps)
+            for (const v of extractVars(s.text))
+              if (!all.includes(v)) all.push(v);
           return all;
         })()
       : extractVars(fText),
@@ -257,11 +306,15 @@
     fKind = item.kind === "sop" ? "sop" : "template";
     fText = item.text || "";
     fSteps = (item.steps || []).map((s) => ({ ...s }));
-    if (fKind === "sop" && fSteps.length === 0) fSteps = [{ id: "", title: "Step 1", text: "" }];
+    if (fKind === "sop" && fSteps.length === 0)
+      fSteps = [{ id: "", title: "Step 1", text: "" }];
     editorOpen = true;
   }
   function addStep() {
-    fSteps = [...fSteps, { id: "", title: `Step ${fSteps.length + 1}`, text: "" }];
+    fSteps = [
+      ...fSteps,
+      { id: "", title: `Step ${fSteps.length + 1}`, text: "" },
+    ];
   }
   function removeStep(i) {
     fSteps = fSteps.filter((_, idx) => idx !== i);
@@ -275,7 +328,8 @@
   }
   function setKind(sop) {
     fKind = sop ? "sop" : "template";
-    if (sop && fSteps.length === 0) fSteps = [{ id: "", title: "Step 1", text: "" }];
+    if (sop && fSteps.length === 0)
+      fSteps = [{ id: "", title: "Step 1", text: "" }];
   }
   async function saveItem() {
     const name = fName.trim();
@@ -283,14 +337,24 @@
       flash("Name is required");
       return;
     }
-    const tags = fTags.split(",").map((t) => t.trim()).filter(Boolean);
+    const tags = fTags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
     const item = {
       id: editingId || "",
       name,
       kind: fKind,
       type: "",
       text: fKind === "template" ? fText : "",
-      steps: fKind === "sop" ? fSteps.map((s) => ({ id: s.id || "", title: s.title, text: s.text })) : [],
+      steps:
+        fKind === "sop"
+          ? fSteps.map((s) => ({
+              id: s.id || "",
+              title: s.title,
+              text: s.text,
+            }))
+          : [],
       tags,
       favorite: false,
       created_at: "",
@@ -298,7 +362,9 @@
     };
     // Preserve favorite when editing existing.
     if (editingId) {
-      const existing = realFolders.find((f) => f.id === editingFolderId)?.items.find((i) => i.id === editingId);
+      const existing = realFolders
+        .find((f) => f.id === editingFolderId)
+        ?.items.find((i) => i.id === editingId);
       if (existing) item.favorite = existing.favorite;
     }
     if (editingId && fFolderId !== editingFolderId) {
@@ -308,9 +374,23 @@
     editorOpen = false;
     flash(editingId ? "Saved" : "Added");
   }
-  async function deleteItem(folderId, item) {
-    if (!confirm(`Delete “${item.name}”?`)) return;
-    library = await libDeleteItem(folderId, item.id);
+  // ── Item right-click menu + always-confirm delete ──
+  let itemMenu = $state(null); // { folderId, item, x, y }
+  let pendingDelete = $state(null); // { folderId, item }
+  function openItemMenu(e, folderId, item) {
+    e.preventDefault();
+    itemMenu = { folderId, item, x: e.clientX, y: e.clientY };
+  }
+  function askDeleteItem(folderId, item) {
+    itemMenu = null;
+    pendingDelete = { folderId, item };
+  }
+  async function confirmDeleteItem() {
+    const d = pendingDelete;
+    pendingDelete = null;
+    if (!d) return;
+    library = await libDeleteItem(d.folderId, d.item.id);
+    flash("Item deleted");
   }
   async function toggleFav(folderId, item) {
     library = await libToggleFavorite(folderId, item.id);
@@ -320,7 +400,13 @@
     const raw = itemPlainText(item);
     const text = activeProfile ? applyVars(raw, activeProfile.values) : raw;
     const ok = await clipCopy(text);
-    flash(ok ? (activeProfile ? `Copied · ${activeProfile.name}` : "Copied") : "Copy failed");
+    flash(
+      ok
+        ? activeProfile
+          ? `Copied · ${activeProfile.name}`
+          : "Copied"
+        : "Copy failed",
+    );
   }
 
   // ── Multi-select (Ctrl/Cmd+click) — ordered, so selection order == copy order ──
@@ -330,7 +416,9 @@
     return selected.indexOf(id);
   }
   function toggleSelect(id) {
-    selected = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    selected = selected.includes(id)
+      ? selected.filter((x) => x !== id)
+      : [...selected, id];
   }
   function cardClick(e, item) {
     // Ctrl/Cmd + click toggles multi-select (drag handles move/reorder; the Copy
@@ -366,7 +454,9 @@
     return selectedEntries
       .map(({ item }) => {
         if (item.kind === "sop") {
-          const steps = (item.steps || []).map((s) => `### ${s.title}\n\n${s.text}`).join("\n\n");
+          const steps = (item.steps || [])
+            .map((s) => `### ${s.title}\n\n${s.text}`)
+            .join("\n\n");
           return `## ${item.name}\n\n${steps}`;
         }
         return `## ${item.name}\n\n${item.text || ""}`;
@@ -377,7 +467,11 @@
   async function copyCombined() {
     if (!selected.length) return;
     const ok = await clipCopy(combinedText());
-    flash(ok ? `Copied ${selected.length} item${selected.length === 1 ? "" : "s"}` : "Copy failed");
+    flash(
+      ok
+        ? `Copied ${selected.length} item${selected.length === 1 ? "" : "s"}`
+        : "Copy failed",
+    );
   }
 
   async function exportSelectedMd() {
@@ -398,7 +492,8 @@
     const steps = [];
     for (const { item } of selectedEntries) {
       if (item.kind === "sop") {
-        for (const s of item.steps || []) steps.push({ id: "", title: s.title, text: s.text });
+        for (const s of item.steps || [])
+          steps.push({ id: "", title: s.title, text: s.text });
       } else {
         steps.push({ id: "", title: item.name, text: item.text || "" });
       }
@@ -414,24 +509,41 @@
     editorOpen = true;
   }
 
-  let totalItems = $derived(realFolders.reduce((n, f) => n + f.items.length, 0));
-  let favCount = $derived(realFolders.reduce((n, f) => n + f.items.filter((i) => i.favorite).length, 0));
+  let totalItems = $derived(
+    realFolders.reduce((n, f) => n + f.items.length, 0),
+  );
+  let favCount = $derived(
+    realFolders.reduce(
+      (n, f) => n + f.items.filter((i) => i.favorite).length,
+      0,
+    ),
+  );
 </script>
 
 <div class="layout">
   <!-- Folder rail -->
   <aside class="rail">
-    <div class="rail-head"><span>Library</span></div>
     <div class="virt-row">
-      <button class="virt" class:active={activeId === ALL} onclick={() => (activeId = ALL)}>
-        <Icon name="layers" size={15} /><span class="vl">All</span><span class="vc">{totalItems}</span>
+      <button
+        class="virt"
+        class:active={activeId === ALL}
+        onclick={() => (activeId = ALL)}
+      >
+        <Icon name="layers" size={15} /><span class="vl">All</span><span
+          class="vc">{totalItems}</span
+        >
       </button>
-      <button class="virt" class:active={activeId === FAV} onclick={() => (activeId = FAV)}>
-        <Icon name="star" size={15} fill={activeId === FAV} /><span class="vl">Favorites</span><span class="vc">{favCount}</span>
+      <button
+        class="virt"
+        class:active={activeId === FAV}
+        onclick={() => (activeId = FAV)}
+      >
+        <Icon name="star" size={15} fill={activeId === FAV} /><span class="vl"
+          >Pinned</span
+        ><span class="vc">{favCount}</span>
       </button>
     </div>
 
-    <div class="rail-sub">Folders</div>
     <ul class="folders">
       {#each realFolders as f (f.id)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -440,21 +552,44 @@
           class:drop={dropFolderId === f.id}
           class:ghost={drag?.kind === "folder" && drag.id === f.id}
           draggable="true"
-          ondragstart={(e) => { drag = { kind: "folder", id: f.id }; e.dataTransfer.effectAllowed = "move"; }}
+          ondragstart={(e) => {
+            drag = { kind: "folder", id: f.id };
+            e.dataTransfer.effectAllowed = "move";
+          }}
           ondragend={clearDrag}
-          ondragover={(e) => { if (drag) { e.preventDefault(); dropFolderId = f.id; } }}
-          ondragleave={() => { if (dropFolderId === f.id) dropFolderId = null; }}
+          ondragover={(e) => {
+            if (drag) {
+              e.preventDefault();
+              dropFolderId = f.id;
+            }
+          }}
+          ondragleave={() => {
+            if (dropFolderId === f.id) dropFolderId = null;
+          }}
           ondrop={() => dropOnFolder(f.id)}
+          oncontextmenu={(e) => openFolderMenu(e, f.id)}
         >
-          <button class="folder" class:active={f.id === activeId} onclick={() => (activeId = f.id)}>
-            <span class="ficon"><FolderIcon name={f.icon || "folder"} color={f.color || "var(--muted)"} size={16} /></span>
+          <button
+            class="folder"
+            class:active={f.id === activeId}
+            onclick={() => (activeId = f.id)}
+          >
+            <span class="ficon"
+              ><FolderIcon
+                name={f.icon || "folder"}
+                color={f.color || "var(--muted)"}
+                size={16}
+              /></span
+            >
             <span class="fname">{f.name}</span>
             <span class="count">{f.items.length}</span>
           </button>
         </li>
       {/each}
     </ul>
-    <button class="newfolder" onclick={openNewFolder}><Icon name="plus" size={15} /> New folder</button>
+    <button class="newfolder" onclick={openNewFolder}
+      ><Icon name="plus" size={15} /> New folder</button
+    >
   </aside>
 
   <!-- Main -->
@@ -462,33 +597,64 @@
     <div class="toolbar">
       <div class="search-wrap">
         <span class="search-ic"><Icon name="search" size={16} /></span>
-        <input class="search" placeholder="Search {isVirtual ? 'all items' : activeFolder?.name || ''}…" bind:value={search} />
+        <input
+          class="search"
+          placeholder="Search {isVirtual
+            ? 'all items'
+            : activeFolder?.name || ''}…"
+          bind:value={search}
+        />
       </div>
-      <button class="btn with-ic" onclick={openNewItem}><Icon name="plus" size={15} /> New item</button>
+      <button class="btn with-ic" onclick={openNewItem}
+        ><Icon name="plus" size={15} /> New item</button
+      >
     </div>
 
     {#if !isVirtual && activeFolder}
       <div class="folder-bar">
-        <span class="fb-icon"><FolderIcon name={activeFolder.icon || "folder"} color={activeFolder.color || "var(--muted)"} size={18} /></span>
+        <span class="fb-icon"
+          ><FolderIcon
+            name={activeFolder.icon || "folder"}
+            color={activeFolder.color || "var(--muted)"}
+            size={18}
+          /></span
+        >
         <strong>{activeFolder.name}</strong>
-        <span class="fcount">{activeFolder.items.length} item{activeFolder.items.length === 1 ? "" : "s"}</span>
-        <button class="icon-btn edit-folder" title="Edit folder" onclick={openEditFolder}><Icon name="edit" size={15} /></button>
+        <span class="fcount"
+          >{activeFolder.items.length} item{activeFolder.items.length === 1
+            ? ""
+            : "s"}</span
+        >
+        <button
+          class="icon-btn edit-folder"
+          title="Edit folder"
+          onclick={openEditFolder}><Icon name="edit" size={15} /></button
+        >
       </div>
     {/if}
 
     {#if scopeTags.length}
       <div class="tagbar">
         {#each scopeTags as t}
-          <button class="chip" class:on={selectedTags.includes(t)} onclick={() => toggleTag(t)}>{t}</button>
+          <button
+            class="chip"
+            class:on={selectedTags.includes(t)}
+            onclick={() => toggleTag(t)}>{t}</button
+          >
         {/each}
-        {#if selectedTags.length}<button class="chip clear" onclick={() => (selectedTags = [])}>clear</button>{/if}
+        {#if selectedTags.length}<button
+            class="chip clear"
+            onclick={() => (selectedTags = [])}>clear</button
+          >{/if}
       </div>
     {/if}
 
     {#if !realFolders.length}
       <p class="empty">No folders yet.</p>
     {:else if visible.length === 0}
-      <p class="empty">No items{search || selectedTags.length ? " match" : " yet"}.</p>
+      <p class="empty">
+        No items{search || selectedTags.length ? " match" : " yet"}.
+      </p>
     {:else}
       <div class="grid">
         {#each visible as { item, folderId, folderName, folderColor } (item.id)}
@@ -505,29 +671,59 @@
             class:drop-after={dropOnId === item.id && dropAfter}
             style:--fcolor={folderColor || "var(--border)"}
             draggable="true"
-            ondragstart={(e) => { drag = { kind: "item", id: item.id, fromFolderId: folderId }; e.dataTransfer.effectAllowed = "move"; }}
+            ondragstart={(e) => {
+              drag = { kind: "item", id: item.id, fromFolderId: folderId };
+              e.dataTransfer.effectAllowed = "move";
+            }}
             ondragend={clearDrag}
             ondragover={(e) => cardDragOver(e, item.id)}
-            ondragleave={() => { if (dropOnId === item.id) dropOnId = null; }}
+            ondragleave={() => {
+              if (dropOnId === item.id) dropOnId = null;
+            }}
             ondrop={() => dropOnCard(item.id, folderId)}
             onclick={(e) => cardClick(e, item)}
+            oncontextmenu={(e) => openItemMenu(e, folderId, item)}
           >
             {#if pos >= 0}<span class="selnum">{pos + 1}</span>{/if}
 
             <!-- Type marker in the corner (SOP shows its step count). -->
-            <span class="type-corner" title={item.kind === "sop" ? `SOP · ${item.steps.length} steps` : "Template"}>
-              {#if item.favorite}<span class="fav-mark"><Icon name="star" size={12} fill={true} /></span>{/if}
+            <span
+              class="type-corner"
+              title={item.kind === "sop"
+                ? `SOP · ${item.steps.length} steps`
+                : "Template"}
+            >
+              {#if item.favorite}<span class="fav-mark"
+                  ><Icon name="star" size={12} fill={true} /></span
+                >{/if}
               <Icon name={item.kind === "sop" ? "sop" : "template"} size={13} />
-              {#if item.kind === "sop"}<span class="tc-n">{item.steps.length}</span>{/if}
+              {#if item.kind === "sop"}<span class="tc-n"
+                  >{item.steps.length}</span
+                >{/if}
             </span>
 
             <!-- Hover actions sit on a dark corner-piece so they don't clash with the type marker. -->
             <div class="hover-actions">
-              <button class="star" class:on={item.favorite} title={item.favorite ? "Unpin" : "Pin"} onclick={() => toggleFav(folderId, item)}>
+              <button
+                class="star"
+                class:on={item.favorite}
+                title={item.favorite ? "Unpin" : "Pin"}
+                onclick={() => toggleFav(folderId, item)}
+              >
                 <Icon name="star" size={15} fill={item.favorite} />
               </button>
-              <button class="icon-btn xs" title="Edit" onclick={() => openEditItem(folderId, item)}><Icon name="edit" size={14} /></button>
-              <button class="icon-btn xs" title="Delete" onclick={() => deleteItem(folderId, item)}><Icon name="trash" size={14} /></button>
+              <button
+                class="icon-btn xs"
+                title="Edit"
+                onclick={() => openEditItem(folderId, item)}
+                ><Icon name="edit" size={14} /></button
+              >
+              <button
+                class="icon-btn xs"
+                title="Delete"
+                onclick={() => askDeleteItem(folderId, item)}
+                ><Icon name="trash" size={14} /></button
+              >
             </div>
 
             <div class="name" title={item.name}>{item.name}</div>
@@ -535,25 +731,44 @@
             {#if !compact}
               {#if isVirtual}
                 <div class="badges">
-                  <span class="badge origin"><span class="odot" style:background={folderColor || "var(--muted)"}></span>{folderName}</span>
+                  <span class="badge origin"
+                    ><span
+                      class="odot"
+                      style:background={folderColor || "var(--muted)"}
+                    ></span>{folderName}</span
+                  >
                 </div>
               {/if}
 
-              <p class="preview">{item.kind === "sop" ? item.steps[0]?.text || "" : item.text}</p>
+              <p class="preview">
+                {item.kind === "sop" ? item.steps[0]?.text || "" : item.text}
+              </p>
 
               {#if (item.tags || []).length}
                 <div class="tags">
-                  {#each item.tags.slice(0, 3) as t}<span class="chip">{t}</span>{/each}
-                  {#if item.tags.length > 3}<span class="chip">+{item.tags.length - 3}</span>{/if}
+                  {#each item.tags.slice(0, 3) as t}<span class="chip">{t}</span
+                    >{/each}
+                  {#if item.tags.length > 3}<span class="chip"
+                      >+{item.tags.length - 3}</span
+                    >{/if}
                 </div>
               {/if}
             {/if}
 
             <footer>
-              <button class="act" onclick={() => copyItem(item)}><Icon name="copy" size={13} /> Copy</button>
+              <button class="act" onclick={() => copyItem(item)}
+                ><Icon name="copy" size={13} /> Copy</button
+              >
               {#if vars.length || item.kind === "sop"}
-                <button class="act primary" onclick={() => onFill(item, item.kind === "sop" ? "steps" : "auto")}>
-                  <Icon name={item.kind === "sop" ? "sop" : "sparkle"} size={13} /> Fill &amp; copy
+                <button
+                  class="act primary"
+                  onclick={() =>
+                    onFill(item, item.kind === "sop" ? "steps" : "auto")}
+                >
+                  <Icon
+                    name={item.kind === "sop" ? "sop" : "sparkle"}
+                    size={13}
+                  /> Fill &amp; copy
                 </button>
               {/if}
             </footer>
@@ -569,9 +784,15 @@
         </div>
         <div class="selactions">
           <button class="ghost" onclick={clearSelection}>Clear</button>
-          <button class="ghost" onclick={exportSelectedMd}><Icon name="reveal" size={14} /> Export .md</button>
-          <button class="ghost" onclick={newSopFromSelection}><Icon name="sop" size={14} /> New SOP</button>
-          <button class="btn" onclick={copyCombined}><Icon name="copy" size={14} /> Copy combined</button>
+          <button class="ghost" onclick={exportSelectedMd}
+            ><Icon name="reveal" size={14} /> Export .md</button
+          >
+          <button class="ghost" onclick={newSopFromSelection}
+            ><Icon name="sop" size={14} /> New SOP</button
+          >
+          <button class="btn" onclick={copyCombined}
+            ><Icon name="copy" size={14} /> Copy combined</button
+          >
         </div>
       </div>
     {/if}
@@ -581,22 +802,39 @@
 <!-- Item editor (simple: name · text · tags) -->
 {#if editorOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => e.target === e.currentTarget && (editorOpen = false)}>
+  <div
+    class="overlay"
+    onclick={(e) => e.target === e.currentTarget && (editorOpen = false)}
+  >
     <div class="modal">
       <div class="modal-head">
         <h3>{editingId ? "Edit item" : "New item"}</h3>
-        <button class="icon-btn" title="Close" onclick={() => (editorOpen = false)}><Icon name="close" size={16} /></button>
+        <button
+          class="icon-btn"
+          title="Close"
+          onclick={() => (editorOpen = false)}
+          ><Icon name="close" size={16} /></button
+        >
       </div>
 
       <label class="fld">
         <span class="fld-label">Name</span>
-        <input class="field" bind:value={fName} placeholder="e.g. Cold outreach" />
+        <input
+          class="field"
+          bind:value={fName}
+          placeholder="e.g. Cold outreach"
+        />
       </label>
 
       {#if fKind === "template"}
         <label class="fld">
           <span class="fld-label">Prompt text</span>
-          <textarea class="field" rows="9" bind:value={fText} placeholder="Enter your prompt here…"></textarea>
+          <textarea
+            class="field"
+            rows="9"
+            bind:value={fText}
+            placeholder="Enter your prompt here…"
+          ></textarea>
           <span class="charcount">{(fText || "").length} characters</span>
         </label>
       {:else}
@@ -606,37 +844,81 @@
             {#each fSteps as step, i (i)}
               <div class="step">
                 <div class="step-head">
-                  <input class="field step-title" bind:value={step.title} placeholder={`Step ${i + 1} title`} />
+                  <input
+                    class="field step-title"
+                    bind:value={step.title}
+                    placeholder={`Step ${i + 1} title`}
+                  />
                   <div class="step-ctl">
-                    <button class="icon-btn" title="Up" onclick={() => moveStep(i, -1)} disabled={i === 0}><Icon name="chevronUp" size={14} /></button>
-                    <button class="icon-btn" title="Down" onclick={() => moveStep(i, 1)} disabled={i === fSteps.length - 1}><Icon name="chevronDown" size={14} /></button>
-                    <button class="icon-btn" title="Remove" onclick={() => removeStep(i)} disabled={fSteps.length === 1}><Icon name="close" size={14} /></button>
+                    <button
+                      class="icon-btn"
+                      title="Up"
+                      onclick={() => moveStep(i, -1)}
+                      disabled={i === 0}
+                      ><Icon name="chevronUp" size={14} /></button
+                    >
+                    <button
+                      class="icon-btn"
+                      title="Down"
+                      onclick={() => moveStep(i, 1)}
+                      disabled={i === fSteps.length - 1}
+                      ><Icon name="chevronDown" size={14} /></button
+                    >
+                    <button
+                      class="icon-btn"
+                      title="Remove"
+                      onclick={() => removeStep(i)}
+                      disabled={fSteps.length === 1}
+                      ><Icon name="close" size={14} /></button
+                    >
                   </div>
                 </div>
-                <textarea class="field" rows="4" bind:value={step.text} placeholder="Prompt text for this step…"></textarea>
+                <textarea
+                  class="field"
+                  rows="4"
+                  bind:value={step.text}
+                  placeholder="Prompt text for this step…"
+                ></textarea>
               </div>
             {/each}
-            <button class="ghost with-ic" onclick={addStep}><Icon name="plus" size={14} /> Add step</button>
+            <button class="ghost with-ic" onclick={addStep}
+              ><Icon name="plus" size={14} /> Add step</button
+            >
           </div>
         </div>
       {/if}
 
       <label class="fld">
-        <span class="fld-label">Tags <span class="dim">(comma separated)</span></span>
-        <input class="field" bind:value={fTags} placeholder="e.g. coding, review, assistant" />
+        <span class="fld-label"
+          >Tags <span class="dim">(comma separated)</span></span
+        >
+        <input
+          class="field"
+          bind:value={fTags}
+          placeholder="e.g. coding, review, assistant"
+        />
       </label>
 
       {#if editorVars.length}
-        <p class="hint">Variables: {#each editorVars as v}<span class="vchip">{v}</span> {/each}</p>
+        <p class="hint">
+          Variables: {#each editorVars as v}<span class="vchip">{v}</span>
+          {/each}
+        </p>
       {/if}
 
       <label class="sop-toggle">
-        <input type="checkbox" checked={fKind === "sop"} onchange={(e) => setKind(e.currentTarget.checked)} />
+        <input
+          type="checkbox"
+          checked={fKind === "sop"}
+          onchange={(e) => setKind(e.currentTarget.checked)}
+        />
         <span>Multi-step SOP — copy step by step</span>
       </label>
 
       <div class="modal-actions">
-        <button class="ghost" onclick={() => (editorOpen = false)}>Cancel</button>
+        <button class="ghost" onclick={() => (editorOpen = false)}
+          >Cancel</button
+        >
         <button class="btn" onclick={saveItem}>Save</button>
       </div>
     </div>
@@ -646,25 +928,46 @@
 <!-- Folder create / edit -->
 {#if folderModalOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => e.target === e.currentTarget && (folderModalOpen = false)}>
+  <div
+    class="overlay"
+    onclick={(e) => e.target === e.currentTarget && (folderModalOpen = false)}
+  >
     <div class="modal">
       <div class="modal-head">
         <h3>{fmMode === "new" ? "New folder" : "Edit folder"}</h3>
-        <button class="icon-btn" title="Close" onclick={() => (folderModalOpen = false)}><Icon name="close" size={16} /></button>
+        <button
+          class="icon-btn"
+          title="Close"
+          onclick={() => (folderModalOpen = false)}
+          ><Icon name="close" size={16} /></button
+        >
       </div>
 
       <label class="fld">
         <span class="fld-label">Name</span>
         <!-- svelte-ignore a11y_autofocus -->
-        <input class="field" bind:value={fmName} placeholder="e.g. Client work" autofocus />
+        <input
+          class="field"
+          bind:value={fmName}
+          placeholder="e.g. Client work"
+          autofocus
+        />
       </label>
 
       <div class="fld">
         <span class="fld-label">Icon</span>
         <div class="icongrid">
           {#each FOLDER_ICON_NAMES as n}
-            <button class="ic" class:sel={fmIcon === n} onclick={() => (fmIcon = n)}>
-              <FolderIcon name={n} color={fmColor || "var(--muted)"} size={18} />
+            <button
+              class="ic"
+              class:sel={fmIcon === n}
+              onclick={() => (fmIcon = n)}
+            >
+              <FolderIcon
+                name={n}
+                color={fmColor || "var(--muted)"}
+                size={18}
+              />
             </button>
           {/each}
         </div>
@@ -674,10 +977,27 @@
         <span class="fld-label">Colour</span>
         <div class="swatches">
           {#each FOLDER_COLORS as c}
-            <button class="sw" class:sel={fmColor === c} style:background={c} onclick={() => (fmColor = c)} aria-label={c}></button>
+            <button
+              class="sw"
+              class:sel={fmColor === c}
+              style:background={c}
+              onclick={() => (fmColor = c)}
+              aria-label={c}
+            ></button>
           {/each}
-          <button class="sw custom" title="Custom colour" onclick={() => fmColorInput?.click()}><Icon name="plus" size={13} /></button>
-          <input bind:this={fmColorInput} class="hidden-color" type="color" value={fmColor || "#8b9fa4"} onchange={(e) => (fmColor = e.target.value)} />
+          <button
+            class="sw custom"
+            title="Custom colour"
+            onclick={() => fmColorInput?.click()}
+            ><Icon name="plus" size={13} /></button
+          >
+          <input
+            bind:this={fmColorInput}
+            class="hidden-color"
+            type="color"
+            value={fmColor || "#8b9fa4"}
+            onchange={(e) => (fmColor = e.target.value)}
+          />
         </div>
       </div>
 
@@ -685,22 +1005,208 @@
         {#if fmMode === "edit"}
           {#if fmConfirmDelete}
             <span class="del-confirm">Delete this folder?</span>
-            <button class="ghost danger" onclick={deleteFolderConfirmed}>Yes, delete</button>
-            <button class="ghost" onclick={() => (fmConfirmDelete = false)}>No</button>
+            <button class="ghost danger" onclick={deleteFolderConfirmed}
+              >Yes, delete</button
+            >
+            <button class="ghost" onclick={() => (fmConfirmDelete = false)}
+              >No</button
+            >
           {:else}
-            <button class="ghost danger left" onclick={() => (fmConfirmDelete = true)}><Icon name="trash" size={14} /> Delete</button>
+            <button
+              class="ghost danger left"
+              onclick={() => (fmConfirmDelete = true)}
+              ><Icon name="trash" size={14} /> Delete</button
+            >
           {/if}
         {/if}
         {#if !fmConfirmDelete}
-          <button class="ghost" onclick={() => (folderModalOpen = false)}>Cancel</button>
-          <button class="btn" onclick={saveFolder}>{fmMode === "new" ? "Create" : "Save"}</button>
+          <button class="ghost" onclick={() => (folderModalOpen = false)}
+            >Cancel</button
+          >
+          <button class="btn" onclick={saveFolder}
+            >{fmMode === "new" ? "Create" : "Save"}</button
+          >
         {/if}
       </div>
     </div>
   </div>
 {/if}
 
+{#if folderMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="ctx-backdrop"
+    onclick={() => (folderMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      folderMenu = null;
+    }}
+  ></div>
+  <div
+    class="ctx-menu"
+    style:left="{folderMenu.x}px"
+    style:top="{folderMenu.y}px"
+  >
+    <button
+      class="ctx-item"
+      onclick={() => menuAction((id) => openEditFolderById(id))}
+    >
+      <Icon name="edit" size={14} /> Rename
+    </button>
+    <button
+      class="ctx-item"
+      onclick={() => menuAction((id) => openEditFolderById(id))}
+    >
+      <Icon name="droplet" size={14} /> Change icon &amp; colour
+    </button>
+    <div class="ctx-sep"></div>
+    <button
+      class="ctx-item danger"
+      onclick={() =>
+        menuAction((id) => openEditFolderById(id, { confirmDelete: true }))}
+    >
+      <Icon name="trash" size={14} /> Delete
+    </button>
+  </div>
+{/if}
+
+{#if itemMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="ctx-backdrop"
+    onclick={() => (itemMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      itemMenu = null;
+    }}
+  ></div>
+  <div class="ctx-menu" style:left="{itemMenu.x}px" style:top="{itemMenu.y}px">
+    <button
+      class="ctx-item"
+      onclick={() => {
+        const m = itemMenu;
+        itemMenu = null;
+        openEditItem(m.folderId, m.item);
+      }}
+    >
+      <Icon name="edit" size={14} /> Edit
+    </button>
+    <button
+      class="ctx-item"
+      onclick={() => {
+        const m = itemMenu;
+        itemMenu = null;
+        copyItem(m.item);
+      }}
+    >
+      <Icon name="copy" size={14} /> Copy
+    </button>
+    <button
+      class="ctx-item"
+      onclick={() => {
+        const m = itemMenu;
+        itemMenu = null;
+        toggleFav(m.folderId, m.item);
+      }}
+    >
+      <Icon name="star" size={14} fill={itemMenu.item.favorite} />
+      {itemMenu.item.favorite ? "Unpin" : "Pin"}
+    </button>
+    <div class="ctx-sep"></div>
+    <button
+      class="ctx-item danger"
+      onclick={() => askDeleteItem(itemMenu.folderId, itemMenu.item)}
+    >
+      <Icon name="trash" size={14} /> Delete
+    </button>
+  </div>
+{/if}
+
+{#if pendingDelete}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="overlay"
+    onclick={(e) => e.target === e.currentTarget && (pendingDelete = null)}
+  >
+    <div class="modal confirm">
+      <div class="modal-head"><h3>Delete item</h3></div>
+      <p class="confirm-text">
+        Are you sure you want to delete <strong
+          >“{pendingDelete.item.name}”</strong
+        >? This can't be undone.
+      </p>
+      <div class="modal-actions">
+        <button class="ghost" onclick={() => (pendingDelete = null)}
+          >Cancel</button
+        >
+        <button class="ghost danger" onclick={confirmDeleteItem}
+          ><Icon name="trash" size={14} /> Delete</button
+        >
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
+  .ctx-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+  }
+  .ctx-menu {
+    position: fixed;
+    z-index: 61;
+    min-width: 190px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+  }
+  .ctx-item:hover {
+    background: var(--elevated);
+  }
+  .ctx-item.danger {
+    color: #d98a8a;
+  }
+  .ctx-item.danger:hover {
+    background: color-mix(in srgb, #b5544f 22%, var(--elevated));
+    color: #f0b4b4;
+  }
+  .ctx-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 2px;
+  }
+  .modal.confirm {
+    max-width: 380px;
+  }
+  .confirm-text {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 4px 0 18px;
+  }
+  .confirm-text strong {
+    color: var(--text);
+  }
+
   .layout {
     display: flex;
     height: 100%;
@@ -804,7 +1310,9 @@
     color: var(--muted);
     cursor: pointer;
     font-size: 13px;
-    transition: color 0.12s var(--ease), border-color 0.12s var(--ease);
+    transition:
+      color 0.12s var(--ease),
+      border-color 0.12s var(--ease);
   }
   .newfolder:hover {
     color: var(--text);
@@ -1088,7 +1596,9 @@
     gap: 9px;
     box-shadow: var(--shadow-card);
     cursor: grab;
-    transition: border-color 0.12s var(--ease), transform 0.08s var(--ease);
+    transition:
+      border-color 0.12s var(--ease),
+      transform 0.08s var(--ease);
   }
   .card:active {
     cursor: grabbing;
@@ -1102,7 +1612,9 @@
   }
   .card.sel {
     border-color: var(--accent);
-    box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-card);
+    box-shadow:
+      inset 0 0 0 1px var(--accent),
+      var(--shadow-card);
   }
   .card.ghost {
     opacity: 0.4;
@@ -1192,7 +1704,11 @@
     gap: 1px;
     padding: 8px 10px 14px 20px;
     border-radius: 0 var(--radius) 0 16px;
-    background: radial-gradient(135% 135% at 100% 0%, color-mix(in srgb, var(--bg) 95%, transparent) 44%, transparent 74%);
+    background: radial-gradient(
+      135% 135% at 100% 0%,
+      color-mix(in srgb, var(--bg) 95%, transparent) 44%,
+      transparent 74%
+    );
     opacity: 0;
     transition: opacity 0.12s var(--ease);
   }
@@ -1279,7 +1795,9 @@
     color: var(--text);
     cursor: pointer;
     font-size: 12px;
-    transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+    transition:
+      border-color 0.12s var(--ease),
+      background 0.12s var(--ease);
   }
   .act:hover {
     border-color: var(--accent);

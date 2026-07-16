@@ -1,12 +1,25 @@
 <script>
   import { allLibraryVars } from "./vars.js";
-  import { profilesSave, profilesDelete, profilesSetLayout, profileFromJson, connectorSend } from "./api.js";
+  import {
+    profilesSave,
+    profilesDelete,
+    profilesSetLayout,
+    profileFromJson,
+    connectorSend,
+  } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props — `layout` is the GLOBAL variable grouping (splitters + ordering),
   // shared by every profile. Presentation-only: never affects `values`, so
   // webhook / n8n / Make mappings keyed on variable names keep working.
-  let { profiles = [], layout = [], folders = [], connectors = [], flash, onData } = $props();
+  let {
+    profiles = [],
+    layout = [],
+    folders = [],
+    connectors = [],
+    flash,
+    onData,
+  } = $props();
 
   let editingId = $state(null); // null = list, "" = new, <id> = editing
   let name = $state("");
@@ -23,19 +36,29 @@
     const known = new Set();
     const out = [];
     for (const e of layout) {
-      if (e.type === "splitter") out.push({ _id: nextId(), type: "splitter", label: e.label || "" });
+      if (e.type === "splitter")
+        out.push({ _id: nextId(), type: "splitter", label: e.label || "" });
       else if (e.type === "var" && !known.has(e.name)) {
         out.push({ _id: "v:" + e.name, type: "var", name: e.name });
         known.add(e.name);
       }
     }
-    for (const n of allLibraryVars(folders)) if (!known.has(n)) { out.push({ _id: "v:" + n, type: "var", name: n }); known.add(n); }
-    for (const n of Object.keys(profileValues || {})) if (!known.has(n)) { out.push({ _id: "v:" + n, type: "var", name: n }); known.add(n); }
+    for (const n of allLibraryVars(folders))
+      if (!known.has(n)) {
+        out.push({ _id: "v:" + n, type: "var", name: n });
+        known.add(n);
+      }
+    for (const n of Object.keys(profileValues || {}))
+      if (!known.has(n)) {
+        out.push({ _id: "v:" + n, type: "var", name: n });
+        known.add(n);
+      }
     return out;
   }
   function seedValues(sl, base) {
     const vm = { ...base };
-    for (const s of sl) if (s.type === "var" && !(s.name in vm)) vm[s.name] = "";
+    for (const s of sl)
+      if (s.type === "var" && !(s.name in vm)) vm[s.name] = "";
     return vm;
   }
 
@@ -57,7 +80,9 @@
 
   function toLayout(sl) {
     return sl.map((s) =>
-      s.type === "splitter" ? { type: "splitter", label: s.label, name: "" } : { type: "var", label: "", name: s.name },
+      s.type === "splitter"
+        ? { type: "splitter", label: s.label, name: "" }
+        : { type: "var", label: "", name: s.name },
     );
   }
   async function persistLayout() {
@@ -73,7 +98,8 @@
     const n = prompt("Variable name (no braces), e.g. firstName:");
     if (!n || !n.trim()) return;
     const nm = n.trim();
-    if (!slots.some((s) => s.type === "var" && s.name === nm)) slots = [...slots, { _id: "v:" + nm, type: "var", name: nm }];
+    if (!slots.some((s) => s.type === "var" && s.name === nm))
+      slots = [...slots, { _id: "v:" + nm, type: "var", name: nm }];
     if (!(nm in valueMap)) valueMap = { ...valueMap, [nm]: "" };
     persistLayout();
   }
@@ -119,7 +145,12 @@
       if (val !== undefined && val !== "") values[s.name] = val;
     }
     await persistLayout();
-    const data = await profilesSave({ id: editingId || "", name: nm, values, source: "manual" });
+    const data = await profilesSave({
+      id: editingId || "",
+      name: nm,
+      values,
+      source: "manual",
+    });
     onData(data);
     editingId = null;
     flash("Profile saved");
@@ -168,7 +199,8 @@
 
   function openConnectorPanel() {
     showConnector = !showConnector;
-    if (showConnector && !connId && connectors.length) connId = connectors[0].id;
+    if (showConnector && !connId && connectors.length)
+      connId = connectors[0].id;
   }
   async function newFromConnector() {
     const c = connectors.find((x) => x.id === connId) || connectors[0];
@@ -181,7 +213,7 @@
       try {
         seedObj = JSON.parse(connSeed);
       } catch {
-        flash("Seed must be valid JSON, e.g. { \"email\": \"sam@x.com\" }");
+        flash('Seed must be valid JSON, e.g. { "email": "sam@x.com" }');
         return;
       }
     }
@@ -190,7 +222,9 @@
       const res = await connectorSend(c.url, JSON.stringify(seedObj));
       const obj = parseObj(res.body);
       if (!obj) {
-        flash(`Connector returned no JSON to build a profile (status ${res.status})`);
+        flash(
+          `Connector returned no JSON to build a profile (status ${res.status})`,
+        );
       } else {
         const data = await profileFromJson(JSON.stringify(obj));
         onData(data);
@@ -214,7 +248,12 @@
       } else {
         const merged = { ...p.values };
         for (const [k, v] of Object.entries(obj)) merged[k] = strval(v);
-        const data = await profilesSave({ id: p.id, name: p.name, values: merged, source: p.source || "manual" });
+        const data = await profilesSave({
+          id: p.id,
+          name: p.name,
+          values: merged,
+          source: p.source || "manual",
+        });
         onData(data);
         flash(`Enriched “${p.name}” (+${Object.keys(obj).length} fields)`);
       }
@@ -228,22 +267,36 @@
 <div class="view">
   {#if editingId === null}
     <div class="view-head">
-      <h2>Profiles</h2>
+      <h2></h2>
       <div class="head-actions">
-        {#if connectors.length}<button class="ghost" onclick={openConnectorPanel}>New from connector</button>{/if}
-        <button class="ghost" onclick={() => (showPaste = !showPaste)}>Paste JSON…</button>
-        <button class="btn" onclick={newProfile}><Icon name="plus" size={14} /> New profile</button>
+        {#if connectors.length}<button
+            class="ghost"
+            onclick={openConnectorPanel}>New from connector</button
+          >{/if}
+        <button class="ghost" onclick={() => (showPaste = !showPaste)}
+          >Paste JSON…</button
+        >
+        <button class="btn" onclick={newProfile}
+          ><Icon name="plus" size={14} /> New profile</button
+        >
       </div>
     </div>
-    <p class="sub">Saved sets of variable values you can pick in the top bar to auto-fill any copy.</p>
 
     {#if showPaste}
       <div class="panel paste">
-        <label>Create from pasted JSON
-          <textarea class="field" rows="5" placeholder={'{ "first_name": "Sam", "email": "sam@example.com" }'} bind:value={pasteText}></textarea>
+        <label
+          >Create from pasted JSON
+          <textarea
+            class="field"
+            rows="5"
+            placeholder={'{ "first_name": "Sam", "email": "sam@example.com" }'}
+            bind:value={pasteText}
+          ></textarea>
         </label>
         <div class="row-end">
-          <button class="ghost" onclick={() => (showPaste = false)}>Cancel</button>
+          <button class="ghost" onclick={() => (showPaste = false)}
+            >Cancel</button
+          >
           <button class="btn" onclick={createFromPaste}>Create profile</button>
         </div>
       </div>
@@ -251,18 +304,34 @@
 
     {#if showConnector}
       <div class="panel paste">
-        <label>Connector
+        <label
+          >Connector
           <select class="field" bind:value={connId}>
-            {#each connectors as c (c.id)}<option value={c.id}>{c.name || c.url}</option>{/each}
+            {#each connectors as c (c.id)}<option value={c.id}
+                >{c.name || c.url}</option
+              >{/each}
           </select>
         </label>
-        <label>Seed to send (optional JSON)
-          <textarea class="field" rows="3" placeholder={'{ "email": "sam@example.com" }'} bind:value={connSeed}></textarea>
+        <label
+          >Seed to send (optional JSON)
+          <textarea
+            class="field"
+            rows="3"
+            placeholder={'{ "email": "sam@example.com" }'}
+            bind:value={connSeed}
+          ></textarea>
         </label>
-        <p class="tiny">Castline POSTs this to the connector and builds a profile from the JSON it returns.</p>
+        <p class="tiny">
+          Castline POSTs this to the connector and builds a profile from the
+          JSON it returns.
+        </p>
         <div class="row-end">
-          <button class="ghost" onclick={() => (showConnector = false)}>Cancel</button>
-          <button class="btn" onclick={newFromConnector} disabled={connBusy}>{connBusy ? "Running…" : "Run"}</button>
+          <button class="ghost" onclick={() => (showConnector = false)}
+            >Cancel</button
+          >
+          <button class="btn" onclick={newFromConnector} disabled={connBusy}
+            >{connBusy ? "Running…" : "Run"}</button
+          >
         </div>
       </div>
     {/if}
@@ -274,36 +343,58 @@
         {#each profiles as p (p.id)}
           <li class="prow">
             <span class="pname">{p.name}</span>
-            {#if p.source && p.source !== "manual"}<span class="srcbadge">{p.source}</span>{/if}
+            {#if p.source && p.source !== "manual"}<span class="srcbadge"
+                >{p.source}</span
+              >{/if}
             <span class="muted">{Object.keys(p.values).length} value(s)</span>
             {#if connectors.length}
               <div class="enrich-wrap">
-                <button class="link" disabled={enrichBusy} onclick={() => (enrichForId = enrichForId === p.id ? null : p.id)}>Enrich ▾</button>
+                <button
+                  class="link"
+                  disabled={enrichBusy}
+                  onclick={() =>
+                    (enrichForId = enrichForId === p.id ? null : p.id)}
+                  >Enrich ▾</button
+                >
                 {#if enrichForId === p.id}
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                  <div class="backdrop" onclick={() => (enrichForId = null)}></div>
+                  <div
+                    class="backdrop"
+                    onclick={() => (enrichForId = null)}
+                  ></div>
                   <div class="enrich-menu">
                     {#each connectors as c (c.id)}
-                      <button class="emi" onclick={() => enrich(p, c)}>{c.name || c.url}</button>
+                      <button class="emi" onclick={() => enrich(p, c)}
+                        >{c.name || c.url}</button
+                      >
                     {/each}
                   </div>
                 {/if}
               </div>
             {/if}
             <button class="link" onclick={() => editProfile(p)}>Edit</button>
-            <button class="link danger" onclick={() => remove(p)}>Delete</button>
+            <button class="link danger" onclick={() => remove(p)}>Delete</button
+            >
           </li>
         {/each}
       </ul>
     {/if}
   {:else}
     <div class="view-head">
-      <button class="ghost" onclick={backToList}><Icon name="arrowLeft" size={15} /> Profiles</button>
+      <button class="ghost" onclick={backToList}
+        ><Icon name="arrowLeft" size={15} /> Profiles</button
+      >
       <button class="btn" onclick={save}>Save profile</button>
     </div>
 
     <div class="panel">
-      <label class="wlabel">Profile name<input class="field" bind:value={name} placeholder="e.g. Client ACME" /></label>
+      <label class="wlabel"
+        >Profile name<input
+          class="field"
+          bind:value={name}
+          placeholder="e.g. Client ACME"
+        /></label
+      >
 
       <div class="editor">
         {#each slots as s, i (s._id)}
@@ -313,26 +404,53 @@
             class:over={i === overIndex}
             draggable="true"
             ondragstart={() => (dragIndex = i)}
-            ondragover={(e) => { e.preventDefault(); overIndex = i; }}
+            ondragover={(e) => {
+              e.preventDefault();
+              overIndex = i;
+            }}
             ondrop={() => onDrop(i)}
-            ondragend={() => { dragIndex = -1; overIndex = -1; }}
+            ondragend={() => {
+              dragIndex = -1;
+              overIndex = -1;
+            }}
           >
-            <span class="grip" title="Drag to reorder"><Icon name="grip" size={16} fill={true} /></span>
+            <span class="grip" title="Drag to reorder"
+              ><Icon name="grip" size={16} fill={true} /></span
+            >
             {#if s.type === "splitter"}
-              <input class="slabel" value={s.label} oninput={(e) => setLabel(i, e.target.value)} onchange={persistLayout} placeholder="Group name" />
+              <input
+                class="slabel"
+                value={s.label}
+                oninput={(e) => setLabel(i, e.target.value)}
+                onchange={persistLayout}
+                placeholder="Group name"
+              />
               <span class="sline"></span>
             {:else}
               <span class="vname" title={s.name}>{s.name}</span>
-              <input class="field vval" bind:value={valueMap[s.name]} placeholder="value" />
+              <input
+                class="field vval"
+                bind:value={valueMap[s.name]}
+                placeholder="value"
+              />
             {/if}
-            <button class="icon-btn rm" title="Remove" onclick={() => removeSlot(i)}><Icon name="close" size={14} /></button>
+            <button
+              class="icon-btn rm"
+              title="Remove"
+              onclick={() => removeSlot(i)}
+              ><Icon name="close" size={14} /></button
+            >
           </div>
         {/each}
       </div>
 
       <div class="editor-actions">
-        <button class="ghost" onclick={addSplitter}><Icon name="divider" size={15} /> Add splitter</button>
-        <button class="ghost" onclick={addVariable}><Icon name="plus" size={14} /> Add variable</button>
+        <button class="ghost" onclick={addSplitter}
+          ><Icon name="divider" size={15} /> Add splitter</button
+        >
+        <button class="ghost" onclick={addVariable}
+          ><Icon name="plus" size={14} /> Add variable</button
+        >
       </div>
     </div>
   {/if}

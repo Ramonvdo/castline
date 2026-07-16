@@ -41,6 +41,11 @@ It's **local-first** (plain JSON files on your machine — no account, no cloud,
   folder, or edit by hand.
 - **Connectors (Make / n8n)** — paste a webhook URL and Castline POSTs a profile's fields to it, then
   builds/enriches the profile from the JSON your scenario returns. No tunnel, no open port (see below).
+- **Inbound HTTP endpoints** — flip it around: enable a token-gated local endpoint and paste its exact
+  config into a Make **HTTP** module (or n8n **HTTP Request** node) to **Create** or **Update/enrich**
+  a profile from the outside.
+- **AI agent** — an embedded terminal running your own `claude` CLI in the data folder, with a generated
+  `CLAUDE.md`, so it can research contacts and create/enrich profiles for you (via the local endpoint).
 
 ## Install
 
@@ -70,7 +75,8 @@ Two portable JSON files (plus settings) in your OS app-data folder — reachable
 | --- | --- |
 | `library.json` | folders, prompts, templates, notes, SOPs |
 | `profiles.json` | `{{variable}}` value sets (+ global variable grouping) |
-| `settings.json` | outbound connector URLs |
+| `settings.json` | outbound connector URLs, HTTP-endpoint + AI-agent config |
+| `CLAUDE.md` / `MEMORY.md` | agent context (generated) + the agent's durable notes |
 
 - **Windows:** `%APPDATA%\Castline\`
 - **macOS:** `~/Library/Application Support/Castline/`
@@ -93,6 +99,37 @@ scenario returns — a single request/response round-trip on the connection Cast
 Response keys become variables of the same name — all mapping lives in your Make/n8n scenario, so
 changing fields never means reconfiguring Castline. No integration? **Paste JSON…** in Profiles still
 works.
+
+## Inbound HTTP endpoints → push profiles in (Make / n8n HTTP module)
+
+The reverse direction. In **Connectors → HTTP endpoint (inbound)**, flip it on to get a token and two
+copy-paste-ready actions to drop into a Make **HTTP** module (n8n **HTTP Request** node):
+
+| | Create profile | Update / enrich profile |
+| --- | --- | --- |
+| Method | `POST` | `POST` |
+| URL | `http://127.0.0.1:8787/api/create-profile` | `http://127.0.0.1:8787/api/update-profile` |
+| Headers | `Authorization: Bearer <token>` · `Content-Type: application/json` | same |
+| Body | JSON — every key becomes a variable | JSON with a `name` **or** `email` to match, plus the fields to merge |
+
+Create makes a brand-new profile; Update merges into the profile matched by `name` (case-insensitive) or
+`email` (`404` if none match). The UI's **Test locally** button fires each action so you can see it work.
+
+The endpoint binds `127.0.0.1` and is token-gated. A **self-hosted n8n** on the same machine/LAN reaches
+it directly; **Make cloud** (or any internet scenario) can't see localhost — run a tunnel
+(**ngrok** / **Cloudflare Tunnel**) and use that URL in place of `127.0.0.1:8787`.
+
+## AI agent → research & enrich profiles
+
+The **Agent** tab embeds your own **Claude Code** CLI (`claude`) in a real terminal, launched in
+Castline's data folder. The app generates a `CLAUDE.md` there describing your `library.json` /
+`profiles.json` and the local write endpoint, so the agent can read your data, research contacts with
+whatever tools you've given it, and **create or enrich profiles** by POSTing to the endpoint above (Rust
+stays the only writer, so the JSON never gets corrupted and the UI updates live). Durable notes it keeps
+go in `MEMORY.md`, which Castline never overwrites.
+
+Requires Claude Code installed (`npm install -g @anthropic-ai/claude-code`, or from **claude.ai/code**).
+Starting the Agent turns the HTTP endpoint on automatically so the agent has a write path.
 
 ## Cutting a release
 
@@ -119,14 +156,18 @@ castline/
   src-tauri/src/
     library.rs         folders + items store (library.json)
     profiles.rs        variable profiles store (profiles.json)
-    settings.rs        app settings + connector list
+    settings.rs        app settings (connectors + HTTP endpoint + AI config)
     connectors.rs      outbound POST (ureq) + JSON→profile passthrough
-    lib.rs             Tauri commands + app setup
+    receiver.rs        inbound HTTP endpoint (tiny_http): create / update profile
+    ai.rs              embedded claude PTY (portable-pty) + reader/emitter threads
+    agent.rs           generates the agent's CLAUDE.md / MEMORY.md
+    lib.rs             Tauri commands + app setup + store file-watcher
 ```
 
 ## Tech stack
 
-Tauri v2 · Rust · Svelte 5 + Vite · plain JSON storage · `ureq` for outbound connectors.
+Tauri v2 · Rust · Svelte 5 + Vite · plain JSON storage · `ureq` (outbound) + `tiny_http` (inbound) ·
+`portable-pty` + `xterm.js` for the embedded agent.
 
 ## License
 
