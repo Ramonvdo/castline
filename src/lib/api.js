@@ -38,7 +38,13 @@ export const clipCopy = (text) => invoke("clip_copy", { text });
 export const getSettings = () => invoke("get_settings");
 export const setConnectors = (connectors) => invoke("set_connectors", { connectors });
 // POST bodyJson to a Make/n8n webhook URL; resolves to { status, body }.
-export const connectorSend = (url, bodyJson) => invoke("connector_send", { url, body: bodyJson });
+// `label` describes what was sent — it shows up in the Recent-sends log.
+export const connectorSend = (url, bodyJson, label = "") =>
+  invoke("connector_send", { url, body: bodyJson, label });
+
+// ── Recent sends (payload previews in the Connectors tab) ──
+export const getSendHistory = () => invoke("get_send_history");
+export const clearSendHistory = () => invoke("clear_send_history");
 
 // ── Inbound HTTP endpoint (Make/n8n HTTP module → profile) ──
 export const httpStatus = () => invoke("http_status");
@@ -86,6 +92,7 @@ export const setAiConfig = (claudePath, extraArgs) => invoke("set_ai_config", { 
 export const onProfilesChanged = (cb) => listen("profiles-changed", (e) => cb(e.payload));
 export const onLibraryChanged = (cb) => listen("library-changed", (e) => cb(e.payload));
 export const onScheduleRan = (cb) => listen("schedule-ran", (e) => cb(e.payload));
+export const onSendLogged = (cb) => listen("send-logged", (e) => cb(e.payload));
 export const onAiOutput = (cb) => listen("ai-output", (e) => cb(e.payload));
 export const onAiExit = (cb) => listen("ai-exit", (e) => cb(e.payload));
 

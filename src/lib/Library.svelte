@@ -466,7 +466,7 @@
     }
     const payload = itemPayload(item, activeProfile?.values || {}, activeProfile?.name || null);
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload));
+      const res = await connectorSend(c.url, JSON.stringify(payload), `Item · ${item.name}`);
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent “${item.name}”${activeProfile ? ` · ${activeProfile.name}` : ""} → ${c.name || "webhook"}`
@@ -493,7 +493,7 @@
     }
     const payload = selectionPayload(items, activeProfile?.values || {}, activeProfile?.name || null);
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload));
+      const res = await connectorSend(c.url, JSON.stringify(payload), `Selection · ${items.length} items`);
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent ${items.length} item${items.length === 1 ? "" : "s"} → ${c.name || "webhook"}`

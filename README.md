@@ -97,6 +97,7 @@ Two portable JSON files (plus settings) in your OS app-data folder — reachable
 | `profiles.json` | `{{variable}}` value sets (+ global variable grouping) |
 | `settings.json` | outbound connector URLs, HTTP-endpoint + AI-agent config |
 | `CLAUDE.md` / `MEMORY.md` | agent context (generated) + the agent's durable notes |
+| `history.json` | the Recent-sends log (last 50 webhook sends with payload previews) |
 
 - **Windows:** `%APPDATA%\Castline\`
 - **macOS:** `~/Library/Application Support/Castline/`

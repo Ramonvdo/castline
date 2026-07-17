@@ -279,7 +279,7 @@
     }
     connBusy = true;
     try {
-      const res = await connectorSend(c.url, JSON.stringify(seedObj));
+      const res = await connectorSend(c.url, JSON.stringify(seedObj), "New profile from connector");
       const obj = parseObj(res.body);
       if (!obj) {
         flash(
@@ -324,7 +324,7 @@
     enrichForId = null;
     enrichBusy = true;
     try {
-      const res = await connectorSend(c.url, JSON.stringify(p.values));
+      const res = await connectorSend(c.url, JSON.stringify(p.values), `Enrich · ${p.name}`);
       const obj = parseObj(res.body);
       if (!obj) {
         flash(`Connector returned no JSON (status ${res.status})`);
@@ -413,7 +413,7 @@
       profiles: profiles.map((p) => ({ name: p.name, values: p.values })),
     };
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload));
+      const res = await connectorSend(c.url, JSON.stringify(payload), `Send all profiles (${profiles.length})`);
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent ${profiles.length} profile${profiles.length === 1 ? "" : "s"} → ${c.name || "webhook"}`

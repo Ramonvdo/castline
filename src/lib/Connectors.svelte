@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import {
     getSettings,
     setConnectors,
@@ -7,6 +7,9 @@
     clipCopy,
     httpStatus,
     setHttpEndpoint,
+    getSendHistory,
+    clearSendHistory,
+    onSendLogged,
   } from "./api.js";
   import { allLibraryVars } from "./vars.js";
   import Icon from "./Icon.svelte";
@@ -52,11 +55,40 @@
     },
   ];
 
+  // ── Recent sends (payload previews) ──
+  let history = $state([]);
+  let expanded = $state(null); // record id
+  let offLogged;
+
   onMount(async () => {
     const s = await getSettings();
     rc = clone(s.connectors || []);
     http = await httpStatus();
+    history = await getSendHistory();
+    offLogged = await onSendLogged(async () => {
+      history = await getSendHistory();
+    });
   });
+  onDestroy(() => offLogged?.());
+
+  async function clearHistory() {
+    await clearSendHistory();
+    history = [];
+    expanded = null;
+    flash("Send history cleared");
+  }
+  // "Echo (local test)" for a known connector URL, else the host.
+  function targetName(url) {
+    const c = (connectors || []).find((x) => x.url === url);
+    if (c?.name) return c.name;
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  }
+  const timeOf = (ts) => (ts || "").slice(11, 16);
+  const dayOf = (ts) => (ts || "").slice(5, 10);
 
   async function toggleHttp() {
     await setHttpEndpoint(!http.enabled, Number(http.port) || 8787);
@@ -91,7 +123,7 @@
     httpTests = { ...httpTests, [id]: { pending: true } };
     try {
       const url = `${actionUrl(id)}?token=${encodeURIComponent(http.token)}`;
-      const res = await connectorSend(url, actionBody(id));
+      const res = await connectorSend(url, actionBody(id), `Endpoint test · ${id}`);
       httpTests = {
         ...httpTests,
         [id]: { status: res.status, body: res.body, error: "" },
@@ -152,7 +184,7 @@
     const sent = exampleJson();
     tests = { ...tests, [c._uid]: { pending: true, sent } };
     try {
-      const res = await connectorSend(c.url, sent);
+      const res = await connectorSend(c.url, sent, `Test · ${c.name || "connector"}`);
       tests = {
         ...tests,
         [c._uid]: { status: res.status, body: res.body, sent, error: "" },
@@ -377,6 +409,50 @@
         Turn it on to get a token and the exact HTTP-module config for Create /
         Update profile.
       </p>
+    {/if}
+  </section>
+
+  <!-- ── Recent sends: what exactly left the app ── -->
+  <section class="http">
+    <div class="http-head">
+      <div class="hh-left">
+        <h3>Recent sends</h3>
+        <p class="sub2">
+          The last outbound webhook sends with their payload — the first place to look when an
+          automation didn't get what you expected. Click a row for the exact JSON.
+        </p>
+      </div>
+      {#if history.length}
+        <button class="ghost sm" onclick={clearHistory}><Icon name="trash" size={14} /> Clear</button>
+      {/if}
+    </div>
+
+    {#if history.length === 0}
+      <p class="tiny off-hint">No sends yet — anything you send to a connector will show up here.</p>
+    {:else}
+      <ul class="hist">
+        {#each history as h (h.id)}
+          <li class="hrow" class:open={expanded === h.id}>
+            <button class="hmain" onclick={() => (expanded = expanded === h.id ? null : h.id)}>
+              <span class="hstatus" class:ok={h.ok} title={h.ok ? "Delivered" : h.error || `HTTP ${h.status}`}>
+                {h.status || "ERR"}
+              </span>
+              <span class="hlabel">{h.label || "Send"}</span>
+              <span class="htarget">→ {targetName(h.url)}</span>
+              <span class="htime" title={h.ts}>{dayOf(h.ts)} · {timeOf(h.ts)}</span>
+            </button>
+            {#if expanded === h.id}
+              <div class="hbody">
+                {#if !h.ok && h.error}<p class="err">{h.error}</p>{/if}
+                <pre class="code resp-body">{prettyBody(h.preview)}</pre>
+                <div class="hacts">
+                  <button class="ghost sm" onclick={() => copyText(h.preview, "Payload copied")}><Icon name="copy" size={13} /> Copy payload</button>
+                </div>
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ul>
     {/if}
   </section>
 </div>
@@ -717,5 +793,85 @@
   }
   .off-hint {
     margin-top: 14px;
+  }
+
+  /* ── Recent sends ── */
+  .hist {
+    list-style: none;
+    margin: 14px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .hrow {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .hrow.open {
+    border-color: var(--border-strong);
+  }
+  .hmain {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 9px 12px;
+  }
+  .hmain:hover {
+    background: var(--elevated);
+  }
+  .hstatus {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: #d98a8a;
+    background: color-mix(in srgb, #b5544f 18%, transparent);
+    border-radius: 5px;
+    padding: 2px 7px;
+    flex-shrink: 0;
+    min-width: 40px;
+    text-align: center;
+  }
+  .hstatus.ok {
+    color: #6fb894;
+    background: color-mix(in srgb, #6fb894 14%, transparent);
+  }
+  .hlabel {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .htarget {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .htime {
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    flex-shrink: 0;
+  }
+  .hbody {
+    padding: 0 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .hacts {
+    display: flex;
+    justify-content: flex-end;
   }
 </style>

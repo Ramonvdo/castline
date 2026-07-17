@@ -135,16 +135,22 @@ pub fn run_schedule(app: &AppHandle, schedule_id: &str) -> Result<String, String
             let name = if c.name.trim().is_empty() { c.url.clone() } else { c.name.clone() };
             (c.url, name)
         };
+        let what = match schedule.kind.as_str() {
+            "item" => "item",
+            "folder" => "folder",
+            _ => "all profiles",
+        };
         let payload = build_payload(app, &schedule)?;
-        let res = connectors::connector_send(&url, &payload)?;
+        let result = connectors::connector_send(&url, &payload);
+        let outcome = match &result {
+            Ok(r) => Ok(r.status),
+            Err(e) => Err(e.clone()),
+        };
+        crate::log_send(app, &url, &format!("Schedule · {what}"), &payload, &outcome);
+        let res = result?;
         if res.status >= 300 {
             Err(format!("connector answered {}: {}", res.status, res.body))
         } else {
-            let what = match schedule.kind.as_str() {
-                "item" => "item",
-                "folder" => "folder",
-                _ => "all profiles",
-            };
             Ok(format!("Sent {what} → {cname}"))
         }
     };

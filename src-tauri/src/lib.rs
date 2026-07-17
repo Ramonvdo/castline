@@ -9,6 +9,7 @@ mod ai;
 mod agent;
 mod llm;
 mod scheduler;
+mod history;
 
 use std::path::Path;
 
@@ -162,11 +163,46 @@ fn profile_from_json(app: AppHandle, json_text: String) -> Result<ProfilesData, 
     Ok(with_profiles(&app, |d| profiles::upsert_profile(d, profile)))
 }
 
+/// Record one outbound send in the Recent-sends log and notify the UI.
+pub fn log_send(app: &AppHandle, url: &str, label: &str, body: &str, outcome: &Result<u16, String>) {
+    let state = app.state::<history::HistoryState>();
+    {
+        let mut data = state.data.lock().unwrap();
+        history::push(&mut data, history::make_record(url, label, body, outcome));
+    }
+    state.save();
+    let _ = app.emit("send-logged", ());
+}
+
 /// POST `body` (JSON) to an outbound connector URL and return its response
 /// status + body (the Make/n8n "Webhook response"). The frontend merges/creates.
+/// Every call lands in the Recent-sends log (`label` says what was sent).
 #[tauri::command]
-fn connector_send(url: String, body: String) -> Result<connectors::ConnectorResult, String> {
-    connectors::connector_send(&url, &body)
+fn connector_send(
+    app: AppHandle,
+    url: String,
+    body: String,
+    label: Option<String>,
+) -> Result<connectors::ConnectorResult, String> {
+    let result = connectors::connector_send(&url, &body);
+    let outcome = match &result {
+        Ok(r) => Ok(r.status),
+        Err(e) => Err(e.clone()),
+    };
+    log_send(&app, &url, label.as_deref().unwrap_or(""), &body, &outcome);
+    result
+}
+
+#[tauri::command]
+fn get_send_history(app: AppHandle) -> Vec<history::SendRecord> {
+    app.state::<history::HistoryState>().data.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn clear_send_history(app: AppHandle) {
+    let state = app.state::<history::HistoryState>();
+    state.data.lock().unwrap().clear();
+    state.save();
 }
 
 /// Every library variable paired with its user-written description ("" if none)
@@ -705,6 +741,7 @@ pub fn run() {
         .manage(SettingsState::load())
         .manage(receiver::HttpController::default())
         .manage(ai::AiState::default())
+        .manage(history::HistoryState::load(data_dir.join("history.json")))
         .setup(|app| {
             let handle = app.handle();
             // Start the inbound HTTP endpoint if it was left enabled.
@@ -807,6 +844,8 @@ pub fn run() {
             profiles_set_descriptions,
             profile_from_json,
             connector_send,
+            get_send_history,
+            clear_send_history,
             llm_enrich,
             set_llm_config,
             set_schedules,

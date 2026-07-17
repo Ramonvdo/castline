@@ -171,7 +171,7 @@
       variables: { ...values },
     };
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload));
+      const res = await connectorSend(c.url, JSON.stringify(payload), `Step ${i + 1}/${item.steps.length} · ${item.name}`);
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent step ${i + 1} → ${c.name || "webhook"}`
@@ -256,7 +256,7 @@
     // (--- separated), steps[] — filled with the CURRENT (live-edited) values.
     const payload = itemPayload(item, { ...values }, profileName());
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload));
+      const res = await connectorSend(c.url, JSON.stringify(payload), `Preview · ${item.name}`);
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent “${item.name}” → ${c.name || "webhook"}`
