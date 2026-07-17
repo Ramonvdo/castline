@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "castline"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -470,6 +470,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tauri-plugin-window-state",
  "tempfile",
  "tiny_http",
  "ureq",
@@ -3992,6 +3993,21 @@ dependencies = [
  "url",
  "windows",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-window-state"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73736611e14142408d15353e21e3cca2f12a3cfb523ad0ce85999b6d2ef1a704"
+dependencies = [
+ "bitflags 2.13.0",
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

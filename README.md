@@ -30,7 +30,10 @@ It's **local-first** (plain JSON files on your machine — no account, no cloud,
 - **`{{variables}}` + Fill & copy** — write `Hi {{firstName}}, …` once; fill the blanks and copy in one step.
 - **Profiles** — save named sets of variable values (a client, a project, yourself) and auto-load them
   when filling. Stored in a **separate file** from your library, so prompts and people back up independently.
-- **SOPs (multi-step)** — chain prompts into an ordered runbook and copy them step-by-step.
+- **SOPs (multi-step)** — chain prompts into an ordered runbook: the preview opens on an **overview**
+  of all steps (hover a title to peek at its filled message), then copy them step-by-step.
+- **Email items** — an item type with a separate **subject** line ({{variables}} allowed) that webhook
+  payloads map independently from the body, so a Make/n8n automation can send the email directly.
 - **Pick & combine** — `Ctrl`-click any cards to select them in order (each shows its number), then
   **Copy combined**, spin them into a **New SOP**, or **export to `.md`** — perfect for assembling a
   custom SOP to hand a client.
@@ -112,10 +115,15 @@ works.
 
 **Outbound extras:** the Profiles header has **Send all ▾** (POSTs `{ "profiles": [ { name, values } ] }`
 to a connector in one click), and any library item has a **plug button** (and right-click entry) to send
-it to a connector. **Settings → Scheduled jobs** automates it on a daily/weekly/monthly cadence: all
-profiles, one item, a whole folder — or a local **backup** of your data files. Schedules run while
-Castline is open (the tray keeps it open); **missed runs are skipped** and the cadence re-anchors at
-launch, unless a job opts into *Catch up*, which fires it exactly once.
+it to a connector. Item payloads carry every useful shape at once — `subject` (mapped separately for
+emails), `text` (the whole message, SOP steps stacked), `text_pages` (the same separated by `---`,
+markdown page breaks) and `steps[]` — plus the active profile's `variables`, so e.g. `{{email}}` can
+drive the automation. **Ctrl-select** several items and the selection bar's **Send ▾** posts one JSON
+with `items[]` (each individually), `combined`, and `combined_pages`. **Settings → Scheduled jobs**
+automates sends on a daily/weekly/monthly cadence: all profiles, one item, a whole folder — or a local
+**backup** of your data files. Schedules run while Castline is open (the tray keeps it open); **missed
+runs are skipped** and the cadence re-anchors at launch, unless a job opts into *Catch up*, which fires
+it exactly once.
 
 ## Castline AI enrich (OpenRouter)
 

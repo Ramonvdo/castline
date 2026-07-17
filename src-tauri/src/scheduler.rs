@@ -29,12 +29,21 @@ fn now_unix() -> i64 {
 }
 
 fn item_json(item: &library::LibItem) -> serde_json::Value {
+    // `text` = the whole message (SOP steps stacked); `text_pages` = the same
+    // separated by `---` (markdown page breaks) — automations pick either.
+    let parts: Vec<&str> = if item.kind == "sop" {
+        item.steps.iter().map(|s| s.text.as_str()).collect()
+    } else {
+        vec![item.text.as_str()]
+    };
     json!({
         "name": item.name,
         "type": item.item_type,
         "kind": item.kind,
         "tags": item.tags,
-        "text": item.text,
+        "subject": item.subject,
+        "text": parts.join("\n\n"),
+        "text_pages": parts.join("\n\n---\n\n"),
         "steps": item.steps.iter().map(|st| json!({ "title": st.title, "text": st.text })).collect::<Vec<_>>(),
     })
 }

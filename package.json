@@ -1,7 +1,7 @@
 {
   "name": "castline",
-  "version": "1.0.0",
-  "description": "Castline — a lightweight, local-first library for prompts, templates, notes & SOPs with live {{variables}} and reusable profiles.",
+  "version": "1.1.0",
+  "description": "Castline \u2014 a lightweight, local-first library for prompts, templates, notes & SOPs with live {{variables}} and reusable profiles.",
   "private": true,
   "type": "module",
   "scripts": {

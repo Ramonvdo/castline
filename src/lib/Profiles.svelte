@@ -107,6 +107,8 @@
   }
   function backToList() {
     editingId = null;
+    hoverVar = null; // never let the hover panel outlive the editor
+    addingVar = false;
   }
 
   function toLayout(sl) {
@@ -125,13 +127,20 @@
     slots = [...slots, { _id: nextId(), type: "splitter", label: "New group" }];
     persistLayout();
   }
+  // Inline add-variable (no native prompt): a small input in the actions row.
+  let addingVar = $state(false);
+  let newVarName = $state("");
   function addVariable() {
-    const n = prompt("Variable name (no braces), e.g. firstName:");
-    if (!n || !n.trim()) return;
-    const nm = n.trim();
+    const nm = newVarName.trim().replace(/[{}]/g, "");
+    if (!nm) {
+      addingVar = false;
+      return;
+    }
     if (!slots.some((s) => s.type === "var" && s.name === nm))
       slots = [...slots, { _id: "v:" + nm, type: "var", name: nm }];
     if (!(nm in valueMap)) valueMap = { ...valueMap, [nm]: "" };
+    newVarName = "";
+    addingVar = false;
     persistLayout();
   }
   function removeSlot(i) {
@@ -187,11 +196,16 @@
     editingId = null;
     flash("Profile saved");
   }
-  async function remove(p) {
-    if (!confirm(`Delete profile “${p.name}”?`)) return;
+  // In-app delete confirmation (no native confirm()).
+  let pendingDelete = $state(null); // a profile
+  async function confirmRemove() {
+    const p = pendingDelete;
+    pendingDelete = null;
+    if (!p) return;
     const data = await profilesDelete(p.id);
     onData(data);
     if (editingId === p.id) editingId = null;
+    flash("Profile deleted");
   }
   async function createFromPaste() {
     if (!pasteText.trim()) {
@@ -534,7 +548,7 @@
               {/if}
             </div>
             <button class="link" onclick={() => editProfile(p)}>Edit</button>
-            <button class="link danger" onclick={() => remove(p)}>Delete</button
+            <button class="link danger" onclick={() => (pendingDelete = p)}>Delete</button
             >
           </li>
         {/each}
@@ -618,13 +632,51 @@
         <button class="ghost" onclick={addSplitter}
           ><Icon name="divider" size={15} /> Add splitter</button
         >
-        <button class="ghost" onclick={addVariable}
-          ><Icon name="plus" size={14} /> Add variable</button
-        >
+        {#if addingVar}
+          <div class="addvar">
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="field avname"
+              bind:value={newVarName}
+              placeholder="variableName (no braces)"
+              autofocus
+              onkeydown={(e) => {
+                if (e.key === "Enter") addVariable();
+                else if (e.key === "Escape") {
+                  addingVar = false;
+                  newVarName = "";
+                }
+              }}
+            />
+            <button class="btn sm" onclick={addVariable}>Add</button>
+            <button class="ghost sm" onclick={() => { addingVar = false; newVarName = ""; }}>Cancel</button>
+          </div>
+        {:else}
+          <button class="ghost" onclick={() => (addingVar = true)}
+            ><Icon name="plus" size={14} /> Add variable</button
+          >
+        {/if}
       </div>
     </div>
   {/if}
 </div>
+
+{#if pendingDelete}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="ai-overlay" onclick={(e) => e.target === e.currentTarget && (pendingDelete = null)}>
+    <div class="ai-modal confirm">
+      <div class="ai-head"><h3>Delete profile</h3></div>
+      <p class="ai-sub">
+        Are you sure you want to delete <strong>“{pendingDelete.name}”</strong>? Its
+        {Object.keys(pendingDelete.values || {}).length} value(s) will be gone. This can't be undone.
+      </p>
+      <div class="ai-actions">
+        <button class="ghost" onclick={() => (pendingDelete = null)}>Cancel</button>
+        <button class="ghost danger" onclick={confirmRemove}><Icon name="trash" size={14} /> Delete</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if hoverVar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -968,6 +1020,32 @@
   .editor-actions {
     display: flex;
     gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .addvar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .avname {
+    width: 240px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+  }
+  .btn.sm,
+  .ghost.sm {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  .ai-modal.confirm {
+    width: min(420px, 100%);
+  }
+  .ghost.danger {
+    color: #d98a8a;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 
   /* ── Long-value hover editor ── */

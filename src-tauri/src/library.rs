@@ -44,6 +44,10 @@ pub struct LibItem {
     /// Used when `kind == "template"`.
     #[serde(default)]
     pub text: String,
+    /// Email subject/header — used when `item_type == "email"`. May contain
+    /// `{{variables}}`; webhook payloads map it separately from the body.
+    #[serde(default)]
+    pub subject: String,
     /// Used when `kind == "sop"`.
     #[serde(default)]
     pub steps: Vec<SopStep>,
@@ -100,6 +104,7 @@ impl Default for LibraryData {
                         name: "Cold outreach".into(),
                         kind: "template".into(),
                         item_type: "email".into(),
+                        subject: String::new(),
                         text: "Hi {{firstName}},\n\nI came across {{company}} and loved what \
                                you're doing. I help teams like {{company}} {{outcome}} — would \
                                {{firstName}} be open to a quick chat this week?\n\nBest,\n{{myName}}"
@@ -116,6 +121,7 @@ impl Default for LibraryData {
                         name: "Blog post SOP".into(),
                         kind: "sop".into(),
                         item_type: "prompt".into(),
+                        subject: String::new(),
                         text: String::new(),
                         steps: vec![
                             SopStep {
@@ -394,6 +400,7 @@ pub fn all_vars(data: &LibraryData) -> Vec<String> {
     };
     for folder in &data.folders {
         for item in &folder.items {
+            scan(&item.subject);
             scan(&item.text);
             for step in &item.steps {
                 scan(&step.text);
@@ -430,6 +437,7 @@ mod tests {
             name: name.into(),
             kind: "template".into(),
             item_type: String::new(),
+            subject: String::new(),
             text: "hello {{x}}".into(),
             steps: vec![],
             tags: vec![],
@@ -549,6 +557,20 @@ mod tests {
         upsert_item(&mut d, &fid, b);
 
         assert_eq!(all_vars(&d), vec!["firstName", "company", "topic"]);
+
+        // Email subjects contribute their variables too (mapped separately in
+        // webhook payloads, but the same fill/profile machinery covers them).
+        let mut c = blank_item("C");
+        c.item_type = "email".into();
+        c.subject = "Quick idea for {{companyName}}".into();
+        c.text = "body".into();
+        upsert_item(&mut d, &fid, c);
+        assert!(all_vars(&d).contains(&"companyName".to_string()));
+
+        // Old files without `subject` still load.
+        let old: LibItem =
+            serde_json::from_str(r#"{ "id": "i", "name": "n", "kind": "template" }"#).unwrap();
+        assert!(old.subject.is_empty());
     }
 
     #[test]

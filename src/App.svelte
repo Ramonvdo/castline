@@ -79,6 +79,7 @@
       } else if (e.key === "Escape") {
         quickOpen = false;
         profileMenuOpen = false;
+        fillItem = null;
       }
     };
     window.addEventListener("keydown", onKey);

@@ -693,6 +693,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(LibraryState::load(data_dir.join("library.json")))
         .manage(ProfilesState::load(data_dir.join("profiles.json")))
         .manage(SettingsState::load())

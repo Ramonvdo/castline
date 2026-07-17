@@ -70,17 +70,18 @@ export function applyVars(text, values) {
   });
 }
 
-/** All variables used by an item (a template, or every step of an SOP). */
+/** All variables used by an item (subject + template text, or every SOP step). */
 export function itemVars(item) {
   if (!item) return [];
+  const all = extractVars(item.subject || "");
   if (item.kind === "sop") {
-    const all = [];
     for (const s of item.steps || []) {
       for (const v of extractVars(s.text)) if (!all.includes(v)) all.push(v);
     }
     return all;
   }
-  return extractVars(item.text);
+  for (const v of extractVars(item.text)) if (!all.includes(v)) all.push(v);
+  return all;
 }
 
 /** The full plain text of an item (SOP steps joined with blank lines). */
@@ -88,6 +89,58 @@ export function itemPlainText(item) {
   return item.kind === "sop"
     ? (item.steps || []).map((s) => s.text).join("\n\n")
     : item.text || "";
+}
+
+// ── Webhook payload builders (shared by Library, FillCopy) ───────────────────
+
+/**
+ * The payload for ONE item: `text` (whole message, SOP steps stacked),
+ * `text_pages` (the same joined with `---` — markdown page breaks), `subject`
+ * mapped separately, filled steps, and the profile's variables so automations
+ * can use e.g. {{email}} directly.
+ */
+export function itemPayload(item, values = {}, profileName = null) {
+  const parts =
+    item.kind === "sop"
+      ? (item.steps || []).map((s) => applyVars(s.text, values))
+      : [applyVars(item.text || "", values)];
+  return {
+    name: item.name,
+    type: item.item_type || "",
+    kind: item.kind,
+    tags: item.tags || [],
+    subject: applyVars(item.subject || "", values),
+    text: parts.join("\n\n"),
+    text_pages: parts.join("\n\n---\n\n"),
+    steps: (item.steps || []).map((s) => ({ title: s.title, text: applyVars(s.text, values) })),
+    profile: profileName,
+    variables: values,
+  };
+}
+
+/**
+ * The payload for a multi-select send: each item individually (`items`), all
+ * messages stacked (`combined`), and stacked but separated by `---`
+ * (`combined_pages`) — pick whichever field fits the automation.
+ */
+export function selectionPayload(items, values = {}, profileName = null) {
+  const filled = items.map((item) => ({
+    name: item.name,
+    type: item.item_type || "",
+    kind: item.kind,
+    tags: item.tags || [],
+    subject: applyVars(item.subject || "", values),
+    text: applyVars(itemPlainText(item), values),
+  }));
+  const texts = filled.map((f) => f.text);
+  return {
+    count: filled.length,
+    combined: texts.join("\n\n"),
+    combined_pages: texts.join("\n\n---\n\n"),
+    items: filled,
+    profile: profileName,
+    variables: values,
+  };
 }
 
 /** Every variable used anywhere across all folders/items. */

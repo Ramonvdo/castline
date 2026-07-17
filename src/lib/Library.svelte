@@ -17,7 +17,7 @@
     pickSaveDoc,
     saveTextFile,
   } from "./api.js";
-  import { extractVars, itemVars, itemPlainText, applyVars } from "./vars.js";
+  import { extractVars, itemVars, itemPlainText, applyVars, itemPayload, selectionPayload } from "./vars.js";
   import Icon from "./Icon.svelte";
   import FolderIcon from "./FolderIcon.svelte";
   import { FOLDER_ICON_NAMES, FOLDER_COLORS } from "./foldericons.js";
@@ -275,22 +275,22 @@
   let editingFolderId = $state(null);
   let fName = $state("");
   let fTags = $state("");
-  let fKind = $state("template");
+  let fType = $state("text"); // "text" | "email" | "sop"
+  let fSubject = $state("");
   let fText = $state("");
   let fSteps = $state([]);
   let fFolderId = $state(null);
 
-  let editorVars = $derived(
-    fKind === "sop"
-      ? (() => {
-          const all = [];
-          for (const s of fSteps)
-            for (const v of extractVars(s.text))
-              if (!all.includes(v)) all.push(v);
-          return all;
-        })()
-      : extractVars(fText),
-  );
+  let editorVars = $derived.by(() => {
+    const all = fType === "email" ? extractVars(fSubject) : [];
+    if (fType === "sop") {
+      for (const s of fSteps)
+        for (const v of extractVars(s.text)) if (!all.includes(v)) all.push(v);
+    } else {
+      for (const v of extractVars(fText)) if (!all.includes(v)) all.push(v);
+    }
+    return all;
+  });
 
   function defaultFolderId() {
     return activeFolder ? activeFolder.id : realFolders[0]?.id || null;
@@ -306,7 +306,8 @@
     fFolderId = defaultFolderId();
     fName = "";
     fTags = "";
-    fKind = "template";
+    fType = "text";
+    fSubject = "";
     fText = "";
     fSteps = [{ id: "", title: "Step 1", text: "" }];
     editorOpen = true;
@@ -317,10 +318,11 @@
     fFolderId = folderId;
     fName = item.name;
     fTags = (item.tags || []).join(", ");
-    fKind = item.kind === "sop" ? "sop" : "template";
+    fType = item.kind === "sop" ? "sop" : item.item_type === "email" ? "email" : "text";
+    fSubject = item.subject || "";
     fText = item.text || "";
     fSteps = (item.steps || []).map((s) => ({ ...s }));
-    if (fKind === "sop" && fSteps.length === 0)
+    if (fType === "sop" && fSteps.length === 0)
       fSteps = [{ id: "", title: "Step 1", text: "" }];
     editorOpen = true;
   }
@@ -340,9 +342,9 @@
     [next[i], next[j]] = [next[j], next[i]];
     fSteps = next;
   }
-  function setKind(sop) {
-    fKind = sop ? "sop" : "template";
-    if (sop && fSteps.length === 0)
+  function setType(t) {
+    fType = t;
+    if (t === "sop" && fSteps.length === 0)
       fSteps = [{ id: "", title: "Step 1", text: "" }];
   }
   async function saveItem() {
@@ -358,11 +360,12 @@
     const item = {
       id: editingId || "",
       name,
-      kind: fKind,
-      type: "",
-      text: fKind === "template" ? fText : "",
+      kind: fType === "sop" ? "sop" : "template",
+      type: fType === "email" ? "email" : "",
+      subject: fType === "email" ? fSubject : "",
+      text: fType !== "sop" ? fText : "",
       steps:
-        fKind === "sop"
+        fType === "sop"
           ? fSteps.map((s) => ({
               id: s.id || "",
               title: s.title,
@@ -440,26 +443,37 @@
     flash("Item duplicated");
   }
 
-  // POST one item to an outbound connector. With a profile active, the text is
-  // sent FILLED and the profile's values ride along — so an automation can use
-  // e.g. {{email}} directly (send the message *to* that address in one click).
+  // POST one item to an outbound connector. With a profile active, subject +
+  // text are sent FILLED and the profile's values ride along — so an automation
+  // can use e.g. {{email}} directly. The payload carries `text` (stacked),
+  // `text_pages` (--- separated) and `steps[]` so Make/n8n picks any shape.
   async function sendItemTo(item, c) {
-    const vals = activeProfile?.values || {};
-    const payload = {
-      name: item.name,
-      type: item.item_type || "",
-      kind: item.kind,
-      tags: item.tags || [],
-      text: applyVars(itemPlainText(item), vals),
-      steps: (item.steps || []).map((s) => ({ title: s.title, text: applyVars(s.text, vals) })),
-      profile: activeProfile ? activeProfile.name : null,
-      variables: vals,
-    };
+    const payload = itemPayload(item, activeProfile?.values || {}, activeProfile?.name || null);
     try {
       const res = await connectorSend(c.url, JSON.stringify(payload));
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent “${item.name}”${activeProfile ? ` · ${activeProfile.name}` : ""} → ${c.name || "webhook"}`
+          : `Webhook answered ${res.status}`,
+      );
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  // POST the multi-selection: each item individually + combined + combined
+  // with --- page breaks, in one payload.
+  let selSendOpen = $state(false);
+  async function sendSelectionTo(c) {
+    selSendOpen = false;
+    const items = selectedEntries.map((e) => e.item);
+    if (!items.length) return;
+    const payload = selectionPayload(items, activeProfile?.values || {}, activeProfile?.name || null);
+    try {
+      const res = await connectorSend(c.url, JSON.stringify(payload));
+      flash(
+        res.status >= 200 && res.status < 300
+          ? `Sent ${items.length} item${items.length === 1 ? "" : "s"} → ${c.name || "webhook"}`
           : `Webhook answered ${res.status}`,
       );
     } catch (e) {
@@ -561,7 +575,8 @@
     fFolderId = defaultFolderId();
     fName = "";
     fTags = "";
-    fKind = "sop";
+    fType = "sop";
+    fSubject = "";
     fText = "";
     fSteps = steps.length ? steps : [{ id: "", title: "Step 1", text: "" }];
     editorOpen = true;
@@ -804,6 +819,9 @@
                   class="sop-badge"
                   title={`SOP · ${item.steps.length} steps`}
                   ><Icon name="sop" size={11} />{item.steps.length}</span
+                >{:else if item.item_type === "email"}<span
+                  class="sop-badge"
+                  title="Email — subject is mapped separately in webhooks">✉</span
                 >{/if}
             </div>
 
@@ -868,6 +886,26 @@
         </div>
         <div class="selactions">
           <button class="ghost" onclick={clearSelection}>Clear</button>
+          {#if connectors.length}
+            <div class="selsend-wrap">
+              <button
+                class="ghost"
+                class:filled={!!activeProfile}
+                title="One payload: each item + combined + combined with --- page breaks"
+                onclick={() => (selSendOpen = !selSendOpen)}
+                ><Icon name="plug" size={14} /> Send ▾</button
+              >
+              {#if selSendOpen}
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                <div class="ctx-backdrop" onclick={() => (selSendOpen = false)}></div>
+                <div class="selsend-menu">
+                  {#each connectors as c (c.id)}
+                    <button class="ctx-item sub" onclick={() => sendSelectionTo(c)}>{c.name || c.url}</button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
           <button class="ghost" onclick={exportSelectedMd}
             ><Icon name="reveal" size={14} /> Export .md</button
           >
@@ -910,14 +948,43 @@
         />
       </label>
 
-      {#if fKind === "template"}
+      <!-- What kind of item is this? Email adds a separately-mapped subject;
+           SOP switches to the steps editor. -->
+      <div class="fld">
+        <span class="fld-label">Type</span>
+        <div class="typeseg">
+          <button class="tseg" class:on={fType === "text"} onclick={() => setType("text")}>
+            <Icon name="template" size={13} /> Text
+          </button>
+          <button class="tseg" class:on={fType === "email"} onclick={() => setType("email")}>
+            ✉ Email
+          </button>
+          <button class="tseg" class:on={fType === "sop"} onclick={() => setType("sop")}>
+            <Icon name="sop" size={13} /> SOP
+          </button>
+        </div>
+      </div>
+
+      {#if fType !== "sop"}
+        {#if fType === "email"}
+          <label class="fld">
+            <span class="fld-label"
+              >Email subject <span class="dim">— sent separately from the email text in webhooks, so Make/n8n can map it on its own; {"{{variables}}"} work here too</span></span
+            >
+            <input
+              class="field"
+              bind:value={fSubject}
+              placeholder={"e.g. Quick idea for {{companyName}}"}
+            />
+          </label>
+        {/if}
         <label class="fld">
-          <span class="fld-label">Prompt text</span>
+          <span class="fld-label">{fType === "email" ? "Email text" : "Prompt text"}</span>
           <textarea
             class="field"
             rows="9"
             bind:value={fText}
-            placeholder="Enter your prompt here…"
+            placeholder={fType === "email" ? "The email body…" : "Enter your prompt here…"}
           ></textarea>
           <span class="charcount">{(fText || "").length} characters</span>
         </label>
@@ -989,15 +1056,6 @@
           {/each}
         </p>
       {/if}
-
-      <label class="sop-toggle">
-        <input
-          type="checkbox"
-          checked={fKind === "sop"}
-          onchange={(e) => setKind(e.currentTarget.checked)}
-        />
-        <span>Multi-step SOP — copy step by step</span>
-      </label>
 
       <div class="modal-actions">
         <button class="ghost" onclick={() => (editorOpen = false)}
@@ -1857,6 +1915,33 @@
     align-items: center;
     gap: 3px;
   }
+  .typeseg {
+    display: flex;
+    gap: 6px;
+  }
+  .tseg {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--well);
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    transition: border-color 0.12s var(--ease), color 0.12s var(--ease), background 0.12s var(--ease);
+  }
+  .tseg:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .tseg.on {
+    color: var(--accent-strong);
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    background: var(--accent-soft);
+    font-weight: 600;
+  }
   .sop-badge {
     display: inline-flex;
     align-items: center;
@@ -2050,6 +2135,28 @@
   }
 
   /* Multi-select action bar (sticky at the bottom of the workspace) */
+  .selsend-wrap {
+    position: relative;
+  }
+  .selsend-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 61;
+    min-width: 190px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .ghost.filled {
+    border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+    color: var(--accent-strong);
+  }
   .selbar {
     position: sticky;
     bottom: 0;

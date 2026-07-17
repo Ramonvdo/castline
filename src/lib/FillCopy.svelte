@@ -1,5 +1,5 @@
 <script>
-  import { extractVars, applyVars, itemVars, groupVarsByLayout, VAR_RE, isAutoVar, autoValue } from "./vars.js";
+  import { extractVars, applyVars, itemVars, groupVarsByLayout, VAR_RE, isAutoVar, autoValue, itemPayload } from "./vars.js";
   import { clipCopy, libRecordUse, connectorSend } from "./api.js";
   import Icon from "./Icon.svelte";
 
@@ -18,6 +18,29 @@
     libRecordUse(item.id).then(onUsed).catch(() => {});
   }
 
+  // SOPs open on an OVERVIEW of all steps (hover a title → preview popup),
+  // then step through; templates go straight to the single view.
+  let stage = $state("single"); // "overview" | "steps" | "single"
+
+  // Hover-preview for a step in the overview (same pattern as the profile
+  // editor's long-value panel: grace timer, fixed-position popup).
+  let hoverStep = $state(null); // { idx, x, y }
+  let hoverTimer;
+  function stepEnter(e, idx) {
+    clearTimeout(hoverTimer);
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = Math.min(r.right + 12, window.innerWidth - 420);
+    const y = Math.max(10, Math.min(r.top - 10, window.innerHeight - 300));
+    hoverStep = { idx, x, y };
+  }
+  function stepLeave() {
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => (hoverStep = null), 200);
+  }
+  function stepHoverKeep() {
+    clearTimeout(hoverTimer);
+  }
+
   // Seed keys; prefill from the active profile (or a picked one) where present.
   $effect(() => {
     const src = activeProfile ? activeProfile.values : {};
@@ -26,6 +49,8 @@
     values = seed;
     stepIdx = 0;
     profileId = activeProfile ? activeProfile.id : "";
+    stage = item && item.kind === "sop" ? "overview" : "single";
+    hoverStep = null;
   });
 
   function applyProfile() {
@@ -37,9 +62,13 @@
   let isSop = $derived(item && item.kind === "sop");
   let step = $derived(isSop ? item.steps[stepIdx] : null);
   let stepVars = $derived(step ? extractVars(step.text) : []);
-  let templateVars = $derived(!isSop && item ? extractVars(item.text) : []);
+  let templateVars = $derived(!isSop && item ? itemVars(item) : []);
   let stepGroups = $derived(groupVarsByLayout(stepVars, layout).filter((g) => g.vars.length));
   let templateGroups = $derived(groupVarsByLayout(templateVars, layout).filter((g) => g.vars.length));
+  // The overview shows every variable across all steps, filled once up front.
+  let allSopVars = $derived(isSop && item ? itemVars(item) : []);
+  let allSopGroups = $derived(groupVarsByLayout(allSopVars, layout).filter((g) => g.vars.length));
+  let isEmail = $derived(item && item.item_type === "email" && (item.subject || "").length > 0);
 
   let preview = $derived.by(() => {
     if (!item) return "";
@@ -125,18 +154,16 @@
     // SOP → all steps filled and joined; template → the live preview.
     return isSop ? (item.steps || []).map((s) => applyVars(s.text, values)).join("\n\n") : preview;
   }
+  async function copySubject() {
+    const ok = await clipCopy(applyVars(item.subject || "", values));
+    flash(ok ? "Subject copied" : "Copy failed");
+  }
   async function sendTo(c) {
     sendOpen = false;
     sending = true;
-    const payload = {
-      name: item.name,
-      type: item.item_type || "",
-      kind: item.kind,
-      tags: item.tags || [],
-      text: fullText(),
-      variables: { ...values },
-      profile: profileName(),
-    };
+    // Shared shape: subject mapped separately, text (stacked), text_pages
+    // (--- separated), steps[] — filled with the CURRENT (live-edited) values.
+    const payload = itemPayload(item, { ...values }, profileName());
     try {
       const res = await connectorSend(c.url, JSON.stringify(payload));
       flash(
@@ -167,7 +194,41 @@
       </label>
     {/if}
 
-    {#if isSop}
+    {#if isSop && stage === "overview"}
+      <!-- Overview: fill every variable once, scan the steps, hover to peek. -->
+      {#if allSopVars.length}
+        <div class="fills">
+          {#each allSopGroups as g}
+            {#if g.label}<div class="fgroup"><span>{g.label}</span><span class="fline"></span></div>{/if}
+            {#each g.vars as v (v)}
+              <label class="fill-row"><span class="vchip">{v}</span><input class="field" bind:value={values[v]} /></label>
+            {/each}
+          {/each}
+        </div>
+      {/if}
+
+      <div class="ov-wrap">
+        <span class="preview-label">{item.steps.length} steps — hover to preview, click to jump in</span>
+        <div class="ov-steps">
+          {#each item.steps as s, i (s.id || i)}
+            <button
+              class="ov-step"
+              onmouseenter={(e) => stepEnter(e, i)}
+              onmouseleave={stepLeave}
+              onclick={() => {
+                hoverStep = null;
+                stepIdx = i;
+                stage = "steps";
+              }}
+            >
+              <span class="ov-n">{i + 1}</span>
+              <span class="ov-title">{s.title || `Step ${i + 1}`}</span>
+              <Icon name="chevronRight" size={14} />
+            </button>
+          {/each}
+        </div>
+      </div>
+    {:else if isSop}
       <div class="stepper">
         <span class="step-pos">Step {stepIdx + 1} / {item.steps.length}</span>
         <strong>{step?.title}</strong>
@@ -193,10 +254,22 @@
       </div>
     {/if}
 
-    <div class="preview-wrap">
-      <span class="preview-label">Preview — <span class="lg-filled">filled</span> · <span class="lg-empty">empty</span></span>
-      <div class="preview-box">{#each previewSegs as s}{#if s.filled}<span class="fv">{s.t}</span>{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
-    </div>
+    {#if !isSop && isEmail}
+      <div class="subj-row">
+        <span class="preview-label">Subject <span class="dim-note">— mapped separately in webhooks</span></span>
+        <div class="subj-line">
+          <div class="subj-box">{#each segment(item.subject) as s}{#if s.filled}<span class="fv">{s.t}</span>{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
+          <button class="icon-btn" title="Copy subject" onclick={copySubject}><Icon name="copy" size={14} /></button>
+        </div>
+      </div>
+    {/if}
+
+    {#if !(isSop && stage === "overview")}
+      <div class="preview-wrap">
+        <span class="preview-label">Preview — <span class="lg-filled">filled</span> · <span class="lg-empty">empty</span></span>
+        <div class="preview-box">{#each previewSegs as s}{#if s.filled}<span class="fv">{s.t}</span>{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
+      </div>
+    {/if}
 
     <div class="modal-actions">
       <button class="ghost" onclick={onClose}>Close</button>
@@ -216,7 +289,18 @@
           {/if}
         </div>
       {/if}
-      {#if isSop}
+      {#if isSop && stage === "overview"}
+        <button class="ghost" onclick={copyAll}>Copy all</button>
+        <button
+          class="btn"
+          onclick={() => {
+            hoverStep = null;
+            stepIdx = 0;
+            stage = "steps";
+          }}>Step-by-step →</button
+        >
+      {:else if isSop}
+        <button class="ghost" onclick={() => { hoverStep = null; stage = "overview"; }}>☰ Overview</button>
         <button class="ghost" onclick={copyAll}>Copy all</button>
         <button class="ghost" onclick={prev} disabled={stepIdx === 0}>← Prev</button>
         <button class="btn" onclick={copyThis}>{isLastStep ? "Copy & finish" : "Copy & next →"}</button>
@@ -226,6 +310,20 @@
     </div>
   </div>
 </div>
+
+{#if hoverStep && item.steps[hoverStep.idx]}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="step-pop"
+    style:left="{hoverStep.x}px"
+    style:top="{hoverStep.y}px"
+    onmouseenter={stepHoverKeep}
+    onmouseleave={stepLeave}
+  >
+    <span class="sp-title">{item.steps[hoverStep.idx].title || `Step ${hoverStep.idx + 1}`}</span>
+    <div class="sp-body">{#each segment(item.steps[hoverStep.idx].text) as s}{#if s.filled}<span class="fv">{s.t}</span>{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
+  </div>
+{/if}
 
 <style>
   .stepper {
@@ -363,5 +461,116 @@
   }
   .smi:hover {
     background: var(--elevated);
+  }
+
+  /* ── SOP overview ── */
+  .ov-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ov-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .ov-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13.5px;
+    padding: 10px 12px;
+    transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+  }
+  .ov-step:hover {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: var(--elevated);
+  }
+  .ov-n {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-size: 11.5px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .ov-title {
+    flex: 1;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ov-step :global(.ic) {
+    color: var(--faint);
+  }
+
+  /* Hover popup: the step's filled message, beside the row. */
+  .step-pop {
+    position: fixed;
+    z-index: 110;
+    width: 400px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 12px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .sp-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-strong);
+  }
+  .sp-body {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+  }
+
+  /* ── Email subject line ── */
+  .subj-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .dim-note {
+    color: var(--faint);
+    font-weight: 400;
+  }
+  .subj-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .subj-box {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    overflow-x: auto;
+    white-space: nowrap;
   }
 </style>

@@ -178,21 +178,27 @@
       flash(String(e));
     }
   }
+  // In-app confirm for destructive imports (no native confirm()).
+  let pendingConfirm = $state(null); // { text, run }
+
   async function importLibrary(mode) {
     const path = await pickOpenFile();
     if (!path) return;
-    if (
-      mode === "replace" &&
-      !confirm(
-        "Replace your entire library with this file? This cannot be undone.",
-      )
-    )
-      return;
-    try {
-      onLibraryData(await importLibraryFrom(path, mode));
-      flash(mode === "replace" ? "Library replaced" : "Library merged");
-    } catch (e) {
-      flash(String(e));
+    const run = async () => {
+      try {
+        onLibraryData(await importLibraryFrom(path, mode));
+        flash(mode === "replace" ? "Library replaced" : "Library merged");
+      } catch (e) {
+        flash(String(e));
+      }
+    };
+    if (mode === "replace") {
+      pendingConfirm = {
+        text: "Replace your entire library with this file? This cannot be undone.",
+        run,
+      };
+    } else {
+      await run();
     }
   }
   async function exportProfiles() {
@@ -208,13 +214,18 @@
   async function importProfiles(mode) {
     const path = await pickOpenFile();
     if (!path) return;
-    if (mode === "replace" && !confirm("Replace all profiles with this file?"))
-      return;
-    try {
-      onProfilesData(await importProfilesFrom(path, mode));
-      flash(mode === "replace" ? "Profiles replaced" : "Profiles merged");
-    } catch (e) {
-      flash(String(e));
+    const run = async () => {
+      try {
+        onProfilesData(await importProfilesFrom(path, mode));
+        flash(mode === "replace" ? "Profiles replaced" : "Profiles merged");
+      } catch (e) {
+        flash(String(e));
+      }
+    };
+    if (mode === "replace") {
+      pendingConfirm = { text: "Replace all profiles with this file? This cannot be undone.", run };
+    } else {
+      await run();
     }
   }
 </script>
@@ -346,9 +357,13 @@
           <option value="backup">Backup data</option>
         </select>
         {#if sch.kind === "item"}
-          <select class="field sel wide" bind:value={sch.item_id} onchange={() => (schedDirty = true)}>
-            {#each allItems as it (it.id)}<option value={it.id}>{it.label}</option>{/each}
-          </select>
+          {#if allItems.length}
+            <select class="field sel wide" bind:value={sch.item_id} onchange={() => (schedDirty = true)}>
+              {#each allItems as it (it.id)}<option value={it.id}>{it.label}</option>{/each}
+            </select>
+          {:else}
+            <span class="hint dim">No items in the library yet</span>
+          {/if}
         {:else if sch.kind === "folder"}
           <select class="field sel wide" bind:value={sch.folder_id} onchange={() => (schedDirty = true)}>
             {#each folders as f (f.id)}<option value={f.id}>{f.name}</option>{/each}
@@ -393,6 +408,20 @@
     </p>
   </section>
 </div>
+
+{#if pendingConfirm}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="confirm-overlay" onclick={(e) => e.target === e.currentTarget && (pendingConfirm = null)}>
+    <div class="confirm-modal">
+      <h3>Are you sure?</h3>
+      <p>{pendingConfirm.text}</p>
+      <div class="confirm-actions">
+        <button class="ghost" onclick={() => (pendingConfirm = null)}>Cancel</button>
+        <button class="btn" onclick={() => { const c = pendingConfirm; pendingConfirm = null; c.run(); }}>Yes, replace</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .view {
@@ -583,5 +612,43 @@
     display: flex;
     justify-content: space-between;
     gap: 8px;
+  }
+  .confirm-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: rgba(4, 7, 13, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .confirm-modal {
+    width: min(420px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .confirm-modal h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .confirm-modal p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  .confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
   }
 </style>
