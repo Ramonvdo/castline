@@ -36,6 +36,16 @@
   let pTone = $state(""); // per-profile tone-of-voice override
   let slots = $state([]);
   let valueMap = $state({});
+  // Locked-empty variables: always empty, filled on the spot, never enriched.
+  let pLocked = $state([]);
+  function toggleLock(varName) {
+    if (pLocked.includes(varName)) {
+      pLocked = pLocked.filter((n) => n !== varName);
+    } else {
+      pLocked = [...pLocked, varName];
+      valueMap = { ...valueMap, [varName]: "" };
+    }
+  }
 
   // ── Long-value hover: a floating, editable preview beside the cursor ──
   const LONG_VALUE = 60;
@@ -95,6 +105,7 @@
     editingId = "";
     name = "";
     pTone = "";
+    pLocked = [];
     slots = buildSlots({});
     valueMap = seedValues(slots, {});
   }
@@ -102,6 +113,7 @@
     editingId = p.id;
     name = p.name;
     pTone = p.tone || "";
+    pLocked = [...(p.locked || [])];
     slots = buildSlots(p.values);
     valueMap = seedValues(slots, p.values);
   }
@@ -181,6 +193,7 @@
     const values = {};
     for (const s of slots) {
       if (s.type !== "var") continue;
+      if (pLocked.includes(s.name)) continue; // locked = always empty
       const val = valueMap[s.name];
       if (val !== undefined && val !== "") values[s.name] = val;
     }
@@ -191,6 +204,7 @@
       values,
       source: "manual",
       tone: pTone.trim(),
+      locked: pLocked,
     });
     onData(data);
     editingId = null;
@@ -284,18 +298,26 @@
     connBusy = false;
   }
   // Merge an enrichment result (object of name → value) into a profile.
+  // Locked-empty variables are never written by any enrich path.
   async function mergeEnriched(p, obj, label) {
+    const locked = p.locked || [];
     const merged = { ...p.values };
-    for (const [k, v] of Object.entries(obj)) merged[k] = strval(v);
+    let n = 0;
+    for (const [k, v] of Object.entries(obj)) {
+      if (locked.includes(k)) continue;
+      merged[k] = strval(v);
+      n += 1;
+    }
     const data = await profilesSave({
       id: p.id,
       name: p.name,
       values: merged,
       source: p.source || "manual",
       tone: p.tone || "",
+      locked,
     });
     onData(data);
-    flash(`Enriched “${p.name}” (+${Object.keys(obj).length} fields${label ? ` · ${label}` : ""})`);
+    flash(`Enriched “${p.name}” (+${n} fields${label ? ` · ${label}` : ""})`);
   }
 
   async function enrich(p, c) {
@@ -612,11 +634,22 @@
               <span class="vname" title={s.name}>{s.name}</span>
               <input
                 class="field vval"
+                class:lockedv={pLocked.includes(s.name)}
                 bind:value={valueMap[s.name]}
-                placeholder="value"
+                disabled={pLocked.includes(s.name)}
+                placeholder={pLocked.includes(s.name) ? "locked — fill on the spot, never enriched" : "value"}
                 onmouseenter={(e) => varEnter(e, s.name)}
                 onmouseleave={varLeave}
               />
+              <button
+                class="icon-btn lockbtn"
+                class:on={pLocked.includes(s.name)}
+                title={pLocked.includes(s.name)
+                  ? "Locked empty — this variable must be filled on the spot and no enrich can write it. Click to unlock."
+                  : "Lock empty — always fill this on the spot; AI/webhook enrich will never touch it"}
+                onclick={() => toggleLock(s.name)}
+                ><Icon name="lock" size={14} /></button
+              >
             {/if}
             <button
               class="icon-btn rm"
@@ -981,6 +1014,18 @@
   }
   .vval {
     flex: 1;
+  }
+  .vval.lockedv {
+    opacity: 0.55;
+    border-style: dashed;
+  }
+  .lockbtn {
+    flex-shrink: 0;
+    color: var(--faint);
+  }
+  .lockbtn.on {
+    color: var(--accent-strong);
+    background: var(--accent-soft);
   }
   .slot.splitter {
     margin-top: 6px;

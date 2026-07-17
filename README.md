@@ -59,6 +59,13 @@ It's **local-first** (plain JSON files on your machine — no account, no cloud,
 - **Starts with Windows & lives in the tray** — autostart is on by default (toggle in Settings);
   closing the window keeps Castline running in the system tray, so schedules, the HTTP endpoint and
   the agent stay available. Reopen from the tray icon; **Quit** is in its right-click menu.
+- **Safe mode** (shield toggle, on by default) — nothing with unfilled `{{variables}}` can be sent to
+  an external webhook; Castline asks you to fill first. Pair it with **lock-empty variables** (padlock
+  in the profile editor): a locked variable is always empty, must be typed on the spot, and no enrich
+  path (AI, webhook, inbound API) can ever write it — perfect for personal notes that must stay human.
+- **AI fill in the preview** — one click fills only the *empty* variables using the current template as
+  context; nothing is saved to the profile — made for one-off copies and sends. SOP previews also get a
+  per-step **copy** and **send-to-webhook** button right on the overview rows.
 
 ## Install
 

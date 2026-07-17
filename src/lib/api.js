@@ -48,8 +48,10 @@ export const setHttpEndpoint = (enabled, port) => invoke("set_http_endpoint", { 
 // context = user-typed notes / attached file text. Everything else is opt-in
 // per run: webSearch (live web), useTone (profile tone → Settings tone),
 // useLibrary (templates as reference). tone = the profile's override text.
-export const llmEnrich = (valuesJson, context = "", webSearch = null, tone = "", useTone = false, useLibrary = false) =>
-  invoke("llm_enrich", { values: valuesJson, context, webSearch, tone, useTone, useLibrary });
+// itemContext: the ONE template being previewed (the in-modal "AI fill") —
+// overrides the library-wide usage context.
+export const llmEnrich = (valuesJson, context = "", webSearch = null, tone = "", useTone = false, useLibrary = false, itemContext = "") =>
+  invoke("llm_enrich", { values: valuesJson, context, webSearch, tone, useTone, useLibrary, itemContext });
 export const setLlmConfig = (apiKey, model, webSearch, tone) =>
   invoke("set_llm_config", { apiKey, model, webSearch, tone });
 export const readTextFile = (path) => invoke("read_text_file", { path });

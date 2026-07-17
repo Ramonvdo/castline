@@ -93,7 +93,7 @@ pub fn build_profile_passthrough(payload: &Value) -> Option<Profile> {
         values.insert(k.clone(), val_to_string(v));
     }
     let name = derive_name(obj, &values);
-    Some(Profile { id: String::new(), name, values, source: "import".into(), tone: String::new() })
+    Some(Profile { id: String::new(), name, values, source: "import".into(), tone: String::new(), locked: Vec::new() })
 }
 
 #[cfg(test)]

@@ -39,6 +39,15 @@
     localStorage.setItem("castline-compact", compact ? "1" : "0");
   }
 
+  // Safe mode (persisted, default ON): refuse to send unfilled {{variables}}
+  // to external webhooks — the app asks you to fill them first.
+  let safeMode = $state(localStorage.getItem("castline-safe") !== "0");
+  function toggleSafe() {
+    safeMode = !safeMode;
+    localStorage.setItem("castline-safe", safeMode ? "1" : "0");
+    flash(safeMode ? "Safe mode on — unfilled {{variables}} won't be sent" : "Safe mode off");
+  }
+
   // Active profile (top-right selector). When set, card Copy auto-fills it.
   let activeProfileId = $state(null);
   let profileMenuOpen = $state(false);
@@ -151,6 +160,17 @@
         <Icon name={compact ? "eyeOff" : "eye"} size={16} />
       </button>
 
+      <button
+        class="ghost eye"
+        class:on={safeMode}
+        onclick={toggleSafe}
+        title={safeMode
+          ? "Safe mode ON — unfilled {{variables}} can't be sent to webhooks"
+          : "Safe mode OFF — sends go out even with unfilled {{variables}}"}
+      >
+        <Icon name="shield" size={16} />
+      </button>
+
       <button class="ghost search-cta" onclick={() => (quickOpen = true)}>
         <Icon name="command" size={15} /><span>Quick find</span><kbd>Ctrl K</kbd>
       </button>
@@ -165,7 +185,7 @@
 
   <main class="body">
     {#if view === "library"}
-      <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} connectors={settings.connectors || []} {flash} onFill={openFill} />
+      <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} {safeMode} connectors={settings.connectors || []} {flash} onFill={openFill} />
     {:else if view === "profiles"}
       <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} connectors={settings.connectors || []} llm={settings.llm || {}} {flash} onData={(d) => (profiles = d)} onAgent={askAgent} />
     {:else if view === "connectors"}
@@ -187,7 +207,7 @@
 {/if}
 
 {#if fillItem}
-  <FillCopy item={fillItem} mode={fillMode} profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} connectors={settings.connectors || []} {flash} onClose={() => (fillItem = null)} onUsed={(d) => (library = d)} />
+  <FillCopy item={fillItem} mode={fillMode} profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {safeMode} llm={settings.llm || {}} connectors={settings.connectors || []} {flash} onClose={() => (fillItem = null)} onUsed={(d) => (library = d)} />
 {/if}
 
 <style>

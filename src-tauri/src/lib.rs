@@ -243,14 +243,20 @@ fn llm_enrich(
     tone: Option<String>,
     use_tone: Option<bool>,
     use_library: Option<bool>,
+    item_context: Option<String>,
 ) -> Result<String, String> {
     let mut cfg = app.state::<SettingsState>().snapshot().llm;
     if let Some(w) = web_search {
         cfg.web_search = w;
     }
     let vars = variable_docs(&app);
-    let usage =
-        if use_library.unwrap_or(false) { usage_context(&app) } else { String::new() };
+    // The in-preview "AI fill" passes the ONE template being previewed as the
+    // usage context; the enrich dialog's checkbox pulls the whole library.
+    let usage = match item_context {
+        Some(ic) if !ic.trim().is_empty() => ic,
+        _ if use_library.unwrap_or(false) => usage_context(&app),
+        _ => String::new(),
+    };
     let tone = if use_tone.unwrap_or(false) {
         let profile_tone = tone.unwrap_or_default();
         llm::effective_tone(&profile_tone, &cfg.tone).to_string()

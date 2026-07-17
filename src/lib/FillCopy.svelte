@@ -1,10 +1,10 @@
 <script>
   import { extractVars, applyVars, itemVars, groupVarsByLayout, VAR_RE, isAutoVar, autoValue, itemPayload } from "./vars.js";
-  import { clipCopy, libRecordUse, connectorSend } from "./api.js";
+  import { clipCopy, libRecordUse, connectorSend, llmEnrich } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props
-  let { item, mode = "auto", profiles = [], layout = [], activeProfile = null, connectors = [], flash, onClose, onUsed = () => {} } = $props();
+  let { item, mode = "auto", profiles = [], layout = [], activeProfile = null, safeMode = true, llm = {}, connectors = [], flash, onClose, onUsed = () => {} } = $props();
 
   let values = $state({});
   let stepIdx = $state(0);
@@ -143,6 +143,84 @@
     if (stepIdx > 0) stepIdx -= 1;
   }
 
+  // ── Per-step actions (SOP overview): direct copy + send one step ──
+  let stepSend = $state(null); // { idx, x, y }
+  async function copyStep(i) {
+    const ok = await clipCopy(applyVars(item.steps[i].text, values));
+    flash(ok ? `Copied step ${i + 1}` : "Copy failed");
+    if (ok) countUse();
+  }
+  async function sendStepTo(i, c) {
+    stepSend = null;
+    const s = item.steps[i];
+    if (safeMode) {
+      const missing = stillUnfilled(s.text);
+      if (missing.length) {
+        flash(`Safe mode: fill ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} first`);
+        return;
+      }
+    }
+    const payload = {
+      name: item.name,
+      kind: "sop-step",
+      step: s.title || `Step ${i + 1}`,
+      index: i + 1,
+      of: item.steps.length,
+      text: applyVars(s.text, values),
+      profile: profileName(),
+      variables: { ...values },
+    };
+    try {
+      const res = await connectorSend(c.url, JSON.stringify(payload));
+      flash(
+        res.status >= 200 && res.status < 300
+          ? `Sent step ${i + 1} → ${c.name || "webhook"}`
+          : `Webhook answered ${res.status}`,
+      );
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  // ── AI fill (ephemeral): fill ONLY the empty variables from this template's
+  // context — never saved to any profile, just for this copy/send. ──
+  let aiBusy = $state(false);
+  let llmReady = $derived(!!(llm && llm.api_key));
+  function rawItemContext() {
+    const parts = [];
+    if (item.subject) parts.push(`Subject: ${item.subject}`);
+    if (item.kind === "sop") {
+      for (const s of item.steps || []) parts.push(`## ${s.title}\n${s.text}`);
+    } else {
+      parts.push(item.text || "");
+    }
+    return `### ${item.name}\n${parts.join("\n\n")}`;
+  }
+  async function aiFill() {
+    const empty = itemVars(item).filter((v) => !values[v]);
+    if (!empty.length) {
+      flash("Nothing to fill — all variables have values");
+      return;
+    }
+    aiBusy = true;
+    try {
+      const tone = profiles.find((p) => p.id === profileId)?.tone || activeProfile?.tone || "";
+      const body = await llmEnrich(JSON.stringify(values), "", null, tone, false, false, rawItemContext());
+      const obj = JSON.parse(body);
+      let n = 0;
+      for (const [k, v] of Object.entries(obj)) {
+        if (empty.includes(k) && v) {
+          values[k] = String(v);
+          n += 1;
+        }
+      }
+      flash(n ? `AI filled ${n} variable${n === 1 ? "" : "s"} — not saved to the profile` : "The AI returned nothing usable");
+    } catch (e) {
+      flash(String(e));
+    }
+    aiBusy = false;
+  }
+
   // ── Send the previewed (filled) message to a connector ──
   // Payload carries the current variable values too, so an automation can use
   // e.g. {{email}} as the destination in one click.
@@ -158,8 +236,21 @@
     const ok = await clipCopy(applyVars(item.subject || "", values));
     flash(ok ? "Subject copied" : "Copy failed");
   }
+
+  // Safe mode: names still unfilled in `text` after applying current values.
+  function stillUnfilled(text) {
+    return extractVars(applyVars(text, values));
+  }
+
   async function sendTo(c) {
     sendOpen = false;
+    if (safeMode) {
+      const missing = stillUnfilled((item.subject || "") + "\n" + (isSop ? (item.steps || []).map((s) => s.text).join("\n") : item.text || ""));
+      if (missing.length) {
+        flash(`Safe mode: fill ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} first`);
+        return;
+      }
+    }
     sending = true;
     // Shared shape: subject mapped separately, text (stacked), text_pages
     // (--- separated), steps[] — filled with the CURRENT (live-edited) values.
@@ -211,7 +302,8 @@
         <span class="preview-label">{item.steps.length} steps — hover to preview, click to jump in</span>
         <div class="ov-steps">
           {#each item.steps as s, i (s.id || i)}
-            <button
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div
               class="ov-step"
               onmouseenter={(e) => stepEnter(e, i)}
               onmouseleave={stepLeave}
@@ -223,8 +315,29 @@
             >
               <span class="ov-n">{i + 1}</span>
               <span class="ov-title">{s.title || `Step ${i + 1}`}</span>
+              <span class="ov-acts">
+                <button
+                  class="icon-btn xs"
+                  title="Copy this step"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    copyStep(i);
+                  }}><Icon name="copy" size={14} /></button
+                >
+                {#if connectors.length}
+                  <button
+                    class="icon-btn xs"
+                    title="Send this step to a webhook"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      hoverStep = null;
+                      stepSend = { idx: i, x: e.clientX, y: e.clientY };
+                    }}><Icon name="plug" size={14} /></button
+                  >
+                {/if}
+              </span>
               <Icon name="chevronRight" size={14} />
-            </button>
+            </div>
           {/each}
         </div>
       </div>
@@ -273,6 +386,16 @@
 
     <div class="modal-actions">
       <button class="ghost" onclick={onClose}>Close</button>
+      {#if llmReady && itemVars(item).length}
+        <button
+          class="ghost aifill"
+          disabled={aiBusy}
+          title="One AI call fills ONLY the empty variables using this template as context — nothing is saved to the profile"
+          onclick={aiFill}
+        >
+          <Icon name="sparkle" size={13} /> {aiBusy ? "Filling…" : "AI fill"}
+        </button>
+      {/if}
       {#if connectors.length}
         <div class="send-wrap">
           <button class="ghost" disabled={sending} onclick={() => (sendOpen = !sendOpen)}>
@@ -310,6 +433,17 @@
     </div>
   </div>
 </div>
+
+{#if stepSend}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div class="ss-backdrop" onclick={() => (stepSend = null)}></div>
+  <div class="ss-menu" style:left="{Math.min(stepSend.x, window.innerWidth - 240)}px" style:top="{stepSend.y}px">
+    <div class="ss-label"><Icon name="plug" size={12} /> Send step {stepSend.idx + 1} to</div>
+    {#each connectors as c (c.id)}
+      <button class="smi" onclick={() => sendStepTo(stepSend.idx, c)}>{c.name || c.url}</button>
+    {/each}
+  </div>
+{/if}
 
 {#if hoverStep && item.steps[hoverStep.idx]}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -514,6 +648,50 @@
   }
   .ov-step :global(.ic) {
     color: var(--faint);
+  }
+  .ov-acts {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.12s var(--ease);
+  }
+  .ov-step:hover .ov-acts {
+    opacity: 1;
+  }
+  .icon-btn.xs {
+    padding: 5px;
+  }
+  .aifill {
+    color: var(--accent-strong);
+  }
+  .ss-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 115;
+  }
+  .ss-menu {
+    position: fixed;
+    z-index: 116;
+    min-width: 200px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .ss-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--faint);
+    padding: 5px 9px 2px;
   }
 
   /* Hover popup: the step's filled message, beside the row. */

@@ -29,10 +29,18 @@
     layout = [],
     activeProfile = null,
     compact = false,
+    safeMode = true,
     connectors = [],
     flash,
     onFill,
   } = $props();
+
+  // Safe mode: variables still unfilled after applying the active profile
+  // (auto {{today}}/{{now}} tokens always resolve, so they never count).
+  function unfilledIn(item) {
+    const vals = activeProfile?.values || {};
+    return extractVars(applyVars((item.subject || "") + "\n" + itemPlainText(item), vals));
+  }
 
   const ALL = "__all";
   const FAV = "__fav";
@@ -448,6 +456,14 @@
   // can use e.g. {{email}} directly. The payload carries `text` (stacked),
   // `text_pages` (--- separated) and `steps[]` so Make/n8n picks any shape.
   async function sendItemTo(item, c) {
+    if (safeMode) {
+      const missing = unfilledIn(item);
+      if (missing.length) {
+        flash(`Safe mode: fill ${missing.length} variable${missing.length === 1 ? "" : "s"} first (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""})`);
+        onFill(item, item.kind === "sop" ? "steps" : "auto");
+        return;
+      }
+    }
     const payload = itemPayload(item, activeProfile?.values || {}, activeProfile?.name || null);
     try {
       const res = await connectorSend(c.url, JSON.stringify(payload));
@@ -468,6 +484,13 @@
     selSendOpen = false;
     const items = selectedEntries.map((e) => e.item);
     if (!items.length) return;
+    if (safeMode) {
+      const blocked = items.filter((i) => unfilledIn(i).length);
+      if (blocked.length) {
+        flash(`Safe mode: ${blocked.length} of ${items.length} selected item${items.length === 1 ? "" : "s"} still ${blocked.length === 1 ? "has" : "have"} unfilled {{variables}}`);
+        return;
+      }
+    }
     const payload = selectionPayload(items, activeProfile?.values || {}, activeProfile?.name || null);
     try {
       const res = await connectorSend(c.url, JSON.stringify(payload));
@@ -2047,7 +2070,10 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-top: 2px;
+    /* Pin the actions to the card's bottom-left regardless of content height
+       (cards are flex columns stretched to equal grid heights). */
+    margin-top: auto;
+    padding-top: 8px;
   }
   .act {
     display: inline-flex;

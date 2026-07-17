@@ -28,6 +28,10 @@ pub struct Profile {
     /// global tone in Settings when non-empty).
     #[serde(default)]
     pub tone: String,
+    /// Variables locked to the empty state: they must be filled on the spot
+    /// and are never written by any enrich path (AI, webhook, inbound API).
+    #[serde(default)]
+    pub locked: Vec<String>,
 }
 
 /// One entry in the **global variable layout** — either a `splitter` (a labelled
@@ -143,6 +147,11 @@ pub fn enrich_existing(data: &mut ProfilesData, incoming: &Profile) -> Option<St
     })?;
 
     for (k, v) in &incoming.values {
+        // Locked-empty variables must always be filled on the spot — no enrich
+        // path may write them.
+        if target.locked.iter().any(|l| l == k) {
+            continue;
+        }
         target.values.insert(k.clone(), v.clone());
     }
     Some(target.name.clone())
@@ -181,7 +190,7 @@ mod tests {
         vals.insert("firstName".into(), "Sam".into());
         upsert_profile(
             &mut d,
-            Profile { id: String::new(), name: "Client A".into(), values: vals, source: String::new(), tone: String::new() },
+            Profile { id: String::new(), name: "Client A".into(), values: vals, source: String::new(), tone: String::new(), locked: Vec::new() },
         );
         assert_eq!(d.profiles.len(), 1);
         assert_eq!(d.profiles[0].source, "manual"); // defaulted
@@ -195,6 +204,7 @@ mod tests {
                 values: BTreeMap::new(),
                 source: "manual".into(),
                 tone: String::new(),
+                locked: Vec::new(),
             },
         );
         assert_eq!(d.profiles.len(), 1);
@@ -220,7 +230,7 @@ mod tests {
         vals.insert("firstName".into(), "Sam".into());
         upsert_profile(
             &mut d,
-            Profile { id: String::new(), name: "Sam".into(), values: vals, source: "webhook".into(), tone: String::new() },
+            Profile { id: String::new(), name: "Sam".into(), values: vals, source: "webhook".into(), tone: String::new(), locked: Vec::new() },
         );
         assert_eq!(d.layout.len(), 2);
         assert_eq!(d.layout[0].label, "Contact");
@@ -233,7 +243,7 @@ mod tests {
         for (k, v) in kv {
             values.insert((*k).into(), (*v).into());
         }
-        Profile { id: gen_id(), name: name.into(), values, source: "manual".into(), tone: String::new() }
+        Profile { id: gen_id(), name: name.into(), values, source: "manual".into(), tone: String::new(), locked: Vec::new() }
     }
 
     #[test]
@@ -256,6 +266,28 @@ mod tests {
         let matched = enrich_existing(&mut d, &incoming).unwrap();
         assert_eq!(matched, "Old Name");
         assert_eq!(d.profiles[0].values.get("title").unwrap(), "CTO");
+    }
+
+    #[test]
+    fn enrich_never_writes_locked_variables() {
+        let mut d = ProfilesData::default();
+        let mut p = profile("Sam", &[("company", "Acme")]);
+        p.locked = vec!["icebreaker".into(), "company".into()];
+        d.profiles.push(p);
+
+        let incoming =
+            profile("Sam", &[("icebreaker", "generated text"), ("company", "Globex"), ("title", "CTO")]);
+        enrich_existing(&mut d, &incoming).unwrap();
+        // Locked keys untouched (icebreaker stays absent, company keeps its value)…
+        assert!(d.profiles[0].values.get("icebreaker").is_none());
+        assert_eq!(d.profiles[0].values.get("company").unwrap(), "Acme");
+        // …while unlocked keys merge normally.
+        assert_eq!(d.profiles[0].values.get("title").unwrap(), "CTO");
+
+        // Round-trips through JSON.
+        let json = serde_json::to_string(&d).unwrap();
+        let back: ProfilesData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.profiles[0].locked.len(), 2);
     }
 
     #[test]
