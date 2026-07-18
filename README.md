@@ -173,9 +173,17 @@ copy-paste-ready actions to drop into a Make **HTTP** module (n8n **HTTP Request
 Create makes a brand-new profile; Update merges into the profile matched by `name` (case-insensitive) or
 `email` (`404` if none match). The UI's **Test locally** button fires each action so you can see it work.
 
-The endpoint binds `127.0.0.1` and is token-gated. A **self-hosted n8n** on the same machine/LAN reaches
-it directly; **Make cloud** (or any internet scenario) can't see localhost — run a tunnel
-(**ngrok** / **Cloudflare Tunnel**) and use that URL in place of `127.0.0.1:8787`.
+The endpoint binds `127.0.0.1`, is **off by default**, and is gated by a random 256-bit bearer token
+(regenerate it any time in the Connectors tab). It rejects browser cross-site requests and throttles
+repeated bad tokens. The **supported** setup is a **self-hosted n8n** on the same machine/LAN, which
+reaches it directly.
+
+> ⚠️ **Exposing it to the internet is at your own risk.** A tunnel (ngrok / Cloudflare Tunnel) *can*
+> let **Make cloud** (or any internet scenario) reach `127.0.0.1:8787`, but then a small loopback
+> server on your PC accepts writes from the public internet, guarded only by the token. If you do this,
+> keep the endpoint on only while you need it and rotate the token afterwards. For always-on internet
+> automation, the hosted **Castline Cloud** API (coming) is the safer path — a real server with proper
+> auth, so nothing on your machine is exposed.
 
 ## AI agent → research & enrich profiles
 

@@ -37,6 +37,28 @@ pub struct SendRecord {
     pub preview: String,
 }
 
+/// Redact secret-bearing query parameters (e.g. the endpoint's own `?token=…`)
+/// so a logged URL never persists an auth secret to disk. The parameter name is
+/// kept for context; only its value is masked.
+pub fn redact_url(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    const SENSITIVE: [&str; 6] = ["token", "key", "apikey", "api_key", "secret", "access_token"];
+    let redacted: Vec<String> = query
+        .split('&')
+        .map(|pair| {
+            let name = pair.split('=').next().unwrap_or("");
+            if SENSITIVE.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+                format!("{name}=…")
+            } else {
+                pair.to_string()
+            }
+        })
+        .collect();
+    format!("{base}?{}", redacted.join("&"))
+}
+
 /// Build a record from a send's inputs + outcome.
 pub fn make_record(url: &str, label: &str, body: &str, outcome: &Result<u16, String>) -> SendRecord {
     let mut preview: String = body.chars().take(PREVIEW_CAP).collect();
@@ -50,7 +72,7 @@ pub fn make_record(url: &str, label: &str, body: &str, outcome: &Result<u16, Str
     SendRecord {
         id: gen_id(),
         ts: now_iso(),
-        url: url.to_string(),
+        url: redact_url(url),
         label: label.to_string(),
         status,
         ok,
@@ -116,6 +138,30 @@ mod tests {
         let trunc = make_record("u", "l", &long_body, &Ok(200));
         assert!(trunc.preview.chars().count() == PREVIEW_CAP + 1); // + ellipsis
         assert!(trunc.preview.ends_with('…'));
+    }
+
+    #[test]
+    fn redact_url_masks_secret_query_params_only() {
+        // The endpoint's own test URL must not persist its bearer token.
+        assert_eq!(
+            redact_url("http://127.0.0.1:8787/api/create-profile?token=deadbeefsecret"),
+            "http://127.0.0.1:8787/api/create-profile?token=…"
+        );
+        // Non-secret params survive for debugging; secrets among them are masked.
+        assert_eq!(
+            redact_url("https://hook.make.com/x?foo=1&api_key=abc&bar=2"),
+            "https://hook.make.com/x?foo=1&api_key=…&bar=2"
+        );
+        // No query string → untouched (Make/n8n secrets live in the path; those
+        // are user-configured connector identifiers shown in the UI by design).
+        assert_eq!(redact_url("https://hook.make.com/abc123"), "https://hook.make.com/abc123");
+    }
+
+    #[test]
+    fn make_record_stores_redacted_url() {
+        let r = make_record("http://127.0.0.1:8787/api/update-profile?token=supersecret", "Test", "{}", &Ok(200));
+        assert!(!r.url.contains("supersecret"));
+        assert!(r.url.contains("token=…"));
     }
 
     #[test]

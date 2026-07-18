@@ -214,10 +214,24 @@ fn default_port() -> u16 {
     8787
 }
 
-/// Give the endpoint a long random bearer token when it's first switched on.
+/// A bearer token minted from the OS CSPRNG: 32 random bytes (256 bits) as hex.
+/// This is an authentication secret, so it must NOT come from `gen_id()` (which
+/// is a time+counter id — predictable from the wall clock).
+pub fn secure_token() -> String {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("OS RNG unavailable");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A modern `secure_token()` is 64 hex chars. Anything shorter is either empty
+/// or a legacy weak token (two `gen_id()`s) and must be rotated.
+const MIN_TOKEN_LEN: usize = 48;
+
+/// Ensure the endpoint has a strong bearer token: mint one when it's first
+/// switched on, and transparently rotate any legacy weak/short token once.
 pub fn ensure_http_token(http: &mut HttpConfig) {
-    if http.token.trim().is_empty() {
-        http.token = format!("{}{}", gen_id(), gen_id());
+    if http.token.trim().len() < MIN_TOKEN_LEN {
+        http.token = secure_token();
     }
 }
 
@@ -388,9 +402,28 @@ mod tests {
         assert!(http.token.is_empty());
         ensure_http_token(&mut http);
         let first = http.token.clone();
-        assert!(first.len() > 16);
-        // Idempotent: a second call keeps the existing token.
+        // 32 random bytes → 64 hex chars, and hex-only.
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        // Idempotent: a second call keeps the existing (already-strong) token.
         ensure_http_token(&mut http);
         assert_eq!(http.token, first);
+    }
+
+    #[test]
+    fn secure_token_is_random_and_long() {
+        let a = secure_token();
+        let b = secure_token();
+        assert_eq!(a.len(), 64);
+        assert_ne!(a, b, "two CSPRNG tokens must not collide");
+    }
+
+    #[test]
+    fn legacy_weak_token_is_rotated() {
+        // An old time+counter token (two gen_id()s) is short/weak → replaced.
+        let mut http = HttpConfig { enabled: true, port: 8787, token: format!("{}{}", gen_id(), gen_id()) };
+        assert!(http.token.len() < MIN_TOKEN_LEN);
+        ensure_http_token(&mut http);
+        assert_eq!(http.token.len(), 64);
     }
 }

@@ -10,12 +10,13 @@
 //! `?token=<token>` query parameter. The server binds `127.0.0.1` only, so it's
 //! not reachable from the internet without a tunnel — see the Connectors UI.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use subtle::ConstantTimeEq;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::connectors::build_profile_passthrough;
@@ -122,6 +123,82 @@ fn query_token(url: &str) -> Option<String> {
     None
 }
 
+// ─── Cross-origin guard (CSRF-to-localhost) ──────────────────────────────────
+
+/// The host part of an `Origin` value (`scheme://host[:port]`), IPv6-aware.
+fn origin_host(origin: &str) -> Option<&str> {
+    let after_scheme = origin.split("://").nth(1)?;
+    let host_port = after_scheme.split('/').next()?;
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next()? // [::1] → ::1
+    } else {
+        host_port.split(':').next()?
+    };
+    Some(host)
+}
+
+/// True when a browser `Origin` header points anywhere other than loopback — a
+/// cross-site call we must refuse (a malicious page fetching the endpoint). Real
+/// clients (curl, the Make/n8n HTTP module, the embedded agent) send no `Origin`
+/// and pass through; the token still gates them.
+pub fn origin_is_foreign(request: &tiny_http::Request) -> bool {
+    for h in request.headers() {
+        if h.field.equiv("Origin") {
+            return match origin_host(h.value.as_str().trim()) {
+                Some(host) => !matches!(host, "127.0.0.1" | "localhost" | "::1"),
+                None => true, // "null" / opaque / malformed → treat as foreign
+            };
+        }
+    }
+    false
+}
+
+// ─── Failed-auth throttle (brute-force guard) ────────────────────────────────
+
+const MAX_FAILS: u32 = 10;
+const THROTTLE_WINDOW: Duration = Duration::from_secs(30);
+
+static AUTH_FAILS: AtomicU32 = AtomicU32::new(0);
+static LAST_FAIL: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Whether too many recent bad tokens should currently be refused (429). After
+/// the cool-down window elapses the counter resets and requests flow again.
+fn auth_throttled() -> bool {
+    if AUTH_FAILS.load(Ordering::Relaxed) < MAX_FAILS {
+        return false;
+    }
+    let mut last = LAST_FAIL.lock().unwrap();
+    match *last {
+        Some(t) if t.elapsed() < THROTTLE_WINDOW => true,
+        _ => {
+            AUTH_FAILS.store(0, Ordering::Relaxed);
+            *last = None;
+            false
+        }
+    }
+}
+
+fn record_auth_failure() {
+    AUTH_FAILS.fetch_add(1, Ordering::Relaxed);
+    *LAST_FAIL.lock().unwrap() = Some(Instant::now());
+}
+
+fn reset_auth_failures() {
+    if AUTH_FAILS.load(Ordering::Relaxed) != 0 {
+        AUTH_FAILS.store(0, Ordering::Relaxed);
+        *LAST_FAIL.lock().unwrap() = None;
+    }
+}
+
+/// Constant-time bearer-token check: latency doesn't leak the token byte-by-byte,
+/// and an empty configured token never matches.
+fn tokens_match(given: &str, expected: &str) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    given.as_bytes().ct_eq(expected.as_bytes()).into()
+}
+
 fn urldecode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -152,6 +229,18 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
         return;
     }
 
+    // Refuse browser cross-site calls before anything else (CSRF-to-localhost).
+    if origin_is_foreign(&request) {
+        respond(request, 403, r#"{"ok":false,"error":"cross-origin requests are not allowed"}"#);
+        return;
+    }
+
+    // Brute-force guard: too many recent bad tokens → cool off with a 429.
+    if auth_throttled() {
+        respond(request, 429, r#"{"ok":false,"error":"too many failed attempts, try again shortly"}"#);
+        return;
+    }
+
     let path = route_path(request.url()).to_string();
     let action = match path.as_str() {
         "/api/create-profile" => Action::Create,
@@ -162,13 +251,16 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
         }
     };
 
-    // Token check against the live settings (so a regenerated token takes effect).
+    // Constant-time token check against the live settings (so a regenerated token
+    // takes effect); repeated failures feed the throttle above.
     let expected = app.state::<SettingsState>().snapshot().http.token;
     let given = request_token(&request);
-    if expected.is_empty() || given != expected {
+    if !tokens_match(&given, &expected) {
+        record_auth_failure();
         respond(request, 401, r#"{"ok":false,"error":"invalid or missing token"}"#);
         return;
     }
+    reset_auth_failures();
 
     let mut body = String::new();
     if request.as_reader().read_to_string(&mut body).is_err() {
@@ -249,5 +341,26 @@ mod tests {
         assert_eq!(query_token("/api/create-profile?token=a%20b").as_deref(), Some("a b"));
         assert_eq!(query_token("/api/create-profile?foo=1&token=xyz").as_deref(), Some("xyz"));
         assert_eq!(query_token("/api/create-profile"), None);
+    }
+
+    #[test]
+    fn origin_host_parses_ipv4_ipv6_and_ports() {
+        assert_eq!(origin_host("http://127.0.0.1:8787"), Some("127.0.0.1"));
+        assert_eq!(origin_host("https://localhost"), Some("localhost"));
+        assert_eq!(origin_host("http://[::1]:8787"), Some("::1"));
+        assert_eq!(origin_host("https://evil.com/path"), Some("evil.com"));
+        // A look-alike host must NOT be mistaken for loopback.
+        assert_eq!(origin_host("https://localhost.evil.com"), Some("localhost.evil.com"));
+        assert_eq!(origin_host("null"), None);
+    }
+
+    #[test]
+    fn tokens_match_is_exact_and_rejects_empty() {
+        assert!(tokens_match("abc123", "abc123"));
+        assert!(!tokens_match("abc123", "abc124"));
+        assert!(!tokens_match("abc", "abc123")); // length mismatch
+        // An unset (empty) configured token can never be matched.
+        assert!(!tokens_match("", ""));
+        assert!(!tokens_match("anything", ""));
     }
 }

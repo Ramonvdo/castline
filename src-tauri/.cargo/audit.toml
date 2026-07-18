@@ -1,0 +1,20 @@
+# cargo-audit configuration.
+#
+# The advisories ignored below are DoS-class issues in `quick-xml@0.39.4`, which
+# enters the tree ONLY through the Linux Wayland clipboard path
+# (tauri-plugin-clipboard-manager -> arboard -> wl-clipboard-rs -> wayland-client
+# -> wayland-scanner, which pins quick-xml ^0.39 and so cannot take the patched
+# 0.41.0). It is verified ABSENT from the Windows and macOS dependency trees
+# (`cargo tree -i quick-xml@0.39.4 --target x86_64-pc-windows-msvc` prints
+# nothing), so Castline's shipped installers do not contain it. Where it is
+# compiled (Linux), wayland-scanner uses it at codegen time to parse the system's
+# own Wayland protocol XML — never untrusted input — so the memory-exhaustion /
+# quadratic-parse advisories are not reachable in this app's threat model.
+#
+# Revisit when the upstream wayland-scanner chain bumps quick-xml.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0194", # quick-xml: quadratic run time on duplicate attribute names (DoS)
+    "RUSTSEC-2026-0195", # quick-xml: unbounded NsReader namespace allocation (DoS)
+]

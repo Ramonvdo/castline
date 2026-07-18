@@ -29,6 +29,11 @@ serde_json = "1"
 chrono = "0.4"
 dirs = "6"
 
+# Cryptographically-secure randomness for the inbound-endpoint bearer token, and
+# constant-time comparison for checking it (no timing side-channel on auth).
+getrandom = "0.2"
+subtle = "2"
+
 # Outbound connectors: a small blocking HTTPS client to POST to a Make/n8n
 # webhook and read the response (rustls TLS via ureq's default features).
 ureq = "2"

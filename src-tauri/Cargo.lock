@@ -460,10 +460,12 @@ version = "1.1.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
+ "getrandom 0.2.17",
  "notify",
  "portable-pty",
  "serde",
  "serde_json",
+ "subtle",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
