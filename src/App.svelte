@@ -9,7 +9,14 @@
   import FillCopy from "./lib/FillCopy.svelte";
   import Icon from "./lib/Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { getLibrary, getProfiles, getSettings, onProfilesChanged, onLibraryChanged, onScheduleRan } from "./lib/api.js";
+  import {
+    getLibrary,
+    getProfiles,
+    getSettings,
+    onProfilesChanged,
+    onLibraryChanged,
+    onScheduleRan,
+  } from "./lib/api.js";
 
   const appWindow = getCurrentWindow();
   const winMinimize = () => appWindow.minimize();
@@ -32,11 +39,27 @@
     view = "agent";
   }
 
-  // Compact / preview mode (persisted).
-  let compact = $state(localStorage.getItem("castline-compact") === "1");
-  function toggleCompact() {
-    compact = !compact;
-    localStorage.setItem("castline-compact", compact ? "1" : "0");
+  // View density (persisted): full → compact → super compact, one button.
+  // Migrates the old boolean "castline-compact" key on first run.
+  let viewMode = $state(
+    localStorage.getItem("castline-view") ||
+      (localStorage.getItem("castline-compact") === "1" ? "compact" : "full"),
+  );
+  function cycleView() {
+    viewMode =
+      viewMode === "full"
+        ? "compact"
+        : viewMode === "compact"
+          ? "super"
+          : "full";
+    localStorage.setItem("castline-view", viewMode);
+    flash(
+      viewMode === "full"
+        ? "Full cards"
+        : viewMode === "compact"
+          ? "Compact view"
+          : "Super compact — hover a card for its actions",
+    );
   }
 
   // Safe mode (persisted, default ON): refuse to send unfilled {{variables}}
@@ -45,15 +68,25 @@
   function toggleSafe() {
     safeMode = !safeMode;
     localStorage.setItem("castline-safe", safeMode ? "1" : "0");
-    flash(safeMode ? "Safe mode on — unfilled {{variables}} won't be sent" : "Safe mode off");
+    flash(
+      safeMode
+        ? "Safe mode on — unfilled {{variables}} won't be sent"
+        : "Safe mode off",
+    );
   }
 
   // Active profile (top-right selector). When set, card Copy auto-fills it.
   let activeProfileId = $state(null);
   let profileMenuOpen = $state(false);
-  let activeProfile = $derived(profiles.profiles.find((p) => p.id === activeProfileId) || null);
+  let activeProfile = $derived(
+    profiles.profiles.find((p) => p.id === activeProfileId) || null,
+  );
   $effect(() => {
-    if (activeProfileId && !profiles.profiles.some((p) => p.id === activeProfileId)) activeProfileId = null;
+    if (
+      activeProfileId &&
+      !profiles.profiles.some((p) => p.id === activeProfileId)
+    )
+      activeProfileId = null;
   });
 
   let toast = $state("");
@@ -123,7 +156,11 @@
       </button>
       <nav class="nav">
         {#each NAV as n}
-          <button class="navlink" class:active={view === n.id} onclick={() => (view = n.id)}>{n.label}</button>
+          <button
+            class="navlink"
+            class:active={view === n.id}
+            onclick={() => (view = n.id)}>{n.label}</button
+          >
         {/each}
       </nav>
     </div>
@@ -131,23 +168,44 @@
     <div class="right">
       <!-- Active profile selector -->
       <div class="profsel">
-        <button class="profbtn" class:on={activeProfile} onclick={() => (profileMenuOpen = !profileMenuOpen)} title="Fill copies with this profile">
+        <button
+          class="profbtn"
+          class:on={activeProfile}
+          onclick={() => (profileMenuOpen = !profileMenuOpen)}
+          title="Fill copies with this profile"
+        >
           <Icon name="user" size={14} />
-          <span class="pl">{activeProfile ? activeProfile.name : "No profile"}</span>
+          <span class="pl"
+            >{activeProfile ? activeProfile.name : "No profile"}</span
+          >
           <Icon name="chevronDown" size={13} />
         </button>
         {#if profileMenuOpen}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div class="backdrop" onclick={() => (profileMenuOpen = false)}></div>
           <div class="menu">
-            <button class="mi" class:sel={!activeProfileId} onclick={() => { activeProfileId = null; profileMenuOpen = false; }}>
+            <button
+              class="mi"
+              class:sel={!activeProfileId}
+              onclick={() => {
+                activeProfileId = null;
+                profileMenuOpen = false;
+              }}
+            >
               No profile
             </button>
             {#if profiles.profiles.length === 0}
               <div class="mi empty">No profiles yet</div>
             {:else}
               {#each profiles.profiles as p (p.id)}
-                <button class="mi" class:sel={p.id === activeProfileId} onclick={() => { activeProfileId = p.id; profileMenuOpen = false; }}>
+                <button
+                  class="mi"
+                  class:sel={p.id === activeProfileId}
+                  onclick={() => {
+                    activeProfileId = p.id;
+                    profileMenuOpen = false;
+                  }}
+                >
                   {p.name}
                 </button>
               {/each}
@@ -156,8 +214,24 @@
         {/if}
       </div>
 
-      <button class="ghost eye" class:on={compact} onclick={toggleCompact} title={compact ? "Show full cards" : "Compact view"}>
-        <Icon name={compact ? "eyeOff" : "eye"} size={16} />
+      <button
+        class="ghost eye"
+        class:on={viewMode !== "full"}
+        onclick={cycleView}
+        title={viewMode === "full"
+          ? "Compact view"
+          : viewMode === "compact"
+            ? "Super compact view — Copy/View appear on hover"
+            : "Back to full cards"}
+      >
+        <Icon
+          name={viewMode === "full"
+            ? "eye"
+            : viewMode === "compact"
+              ? "eyeOff"
+              : "rows"}
+          size={16}
+        />
       </button>
 
       <button
@@ -172,30 +246,71 @@
       </button>
 
       <button class="ghost search-cta" onclick={() => (quickOpen = true)}>
-        <Icon name="command" size={15} /><span>Quick find</span><kbd>Ctrl K</kbd>
+        <Icon name="command" size={15} /><span>Search</span><kbd>Ctrl K</kbd>
       </button>
 
       <div class="winctl">
-        <button class="wbtn" title="Minimize" onclick={winMinimize}><Icon name="winMin" size={15} /></button>
-        <button class="wbtn" title="Maximize" onclick={winToggleMax}><Icon name="winMax" size={13} /></button>
-        <button class="wbtn danger" title="Close" onclick={winClose}><Icon name="close" size={15} /></button>
+        <button class="wbtn" title="Minimize" onclick={winMinimize}
+          ><Icon name="winMin" size={15} /></button
+        >
+        <button class="wbtn" title="Maximize" onclick={winToggleMax}
+          ><Icon name="winMax" size={13} /></button
+        >
+        <button class="wbtn danger" title="Close" onclick={winClose}
+          ><Icon name="close" size={15} /></button
+        >
       </div>
     </div>
   </header>
 
   <main class="body">
     {#if view === "library"}
-      <Library bind:library profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {compact} {safeMode} connectors={settings.connectors || []} {flash} onFill={openFill} />
+      <Library
+        bind:library
+        profiles={profiles.profiles}
+        layout={profiles.layout || []}
+        {activeProfile}
+        {viewMode}
+        {safeMode}
+        connectors={settings.connectors || []}
+        {flash}
+        onFill={openFill}
+      />
     {:else if view === "profiles"}
-      <Profiles profiles={profiles.profiles} layout={profiles.layout || []} folders={library.folders} connectors={settings.connectors || []} llm={settings.llm || {}} {flash} onData={(d) => (profiles = d)} onAgent={askAgent} />
+      <Profiles
+        profiles={profiles.profiles}
+        layout={profiles.layout || []}
+        folders={library.folders}
+        connectors={settings.connectors || []}
+        llm={settings.llm || {}}
+        {flash}
+        onData={(d) => (profiles = d)}
+        onAgent={askAgent}
+      />
     {:else if view === "connectors"}
-      <Connectors connectors={settings.connectors || []} folders={library.folders} {flash} onSettings={(s) => (settings = s)} />
+      <Connectors
+        connectors={settings.connectors || []}
+        folders={library.folders}
+        {flash}
+        onSettings={(s) => (settings = s)}
+      />
     {:else if view === "settings"}
-      <Settings {flash} folders={library.folders} connectors={settings.connectors || []} onLibraryData={(d) => (library = d)} onProfilesData={(d) => (profiles = d)} onSettings={(s) => (settings = s)} />
+      <Settings
+        {flash}
+        folders={library.folders}
+        connectors={settings.connectors || []}
+        onLibraryData={(d) => (library = d)}
+        onProfilesData={(d) => (profiles = d)}
+        onSettings={(s) => (settings = s)}
+      />
     {/if}
     <!-- Agent stays mounted so the terminal survives tab switches -->
     <div class="agent-wrap" style:display={view === "agent" ? "block" : "none"}>
-      <Agent active={view === "agent"} pending={agentPrompt} onPendingSent={() => (agentPrompt = "")} />
+      <Agent
+        active={view === "agent"}
+        pending={agentPrompt}
+        onPendingSent={() => (agentPrompt = "")}
+      />
     </div>
   </main>
 </div>
@@ -203,11 +318,30 @@
 {#if toast}<div class="toast">{toast}</div>{/if}
 
 {#if quickOpen}
-  <QuickOpen {library} {activeProfile} {flash} onFill={openFill} onClose={() => (quickOpen = false)} onUsed={(d) => (library = d)} />
+  <QuickOpen
+    {library}
+    {activeProfile}
+    {flash}
+    onFill={openFill}
+    onClose={() => (quickOpen = false)}
+    onUsed={(d) => (library = d)}
+  />
 {/if}
 
 {#if fillItem}
-  <FillCopy item={fillItem} mode={fillMode} profiles={profiles.profiles} layout={profiles.layout || []} {activeProfile} {safeMode} llm={settings.llm || {}} connectors={settings.connectors || []} {flash} onClose={() => (fillItem = null)} onUsed={(d) => (library = d)} />
+  <FillCopy
+    item={fillItem}
+    mode={fillMode}
+    profiles={profiles.profiles}
+    layout={profiles.layout || []}
+    {activeProfile}
+    {safeMode}
+    llm={settings.llm || {}}
+    connectors={settings.connectors || []}
+    {flash}
+    onClose={() => (fillItem = null)}
+    onUsed={(d) => (library = d)}
+  />
 {/if}
 
 <style>
@@ -262,7 +396,9 @@
     font-size: 13px;
     padding: 6px 10px;
     border-radius: var(--radius-sm);
-    transition: color 0.12s var(--ease), background 0.12s var(--ease);
+    transition:
+      color 0.12s var(--ease),
+      background 0.12s var(--ease);
   }
   .navlink:hover {
     color: var(--text);
@@ -390,7 +526,9 @@
     background: transparent;
     color: var(--muted);
     cursor: pointer;
-    transition: background 0.12s var(--ease), color 0.12s var(--ease);
+    transition:
+      background 0.12s var(--ease),
+      color 0.12s var(--ease);
   }
   .wbtn:hover {
     background: var(--elevated);

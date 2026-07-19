@@ -1,10 +1,31 @@
 <script>
-  import { extractVars, applyVars, itemVars, groupVarsByLayout, VAR_RE, isAutoVar, autoValue, itemPayload } from "./vars.js";
+  import {
+    extractVars,
+    applyVars,
+    itemVars,
+    groupVarsByLayout,
+    VAR_RE,
+    isAutoVar,
+    autoValue,
+    itemPayload,
+  } from "./vars.js";
   import { clipCopy, libRecordUse, connectorSend, llmEnrich } from "./api.js";
   import Icon from "./Icon.svelte";
 
   // props
-  let { item, mode = "auto", profiles = [], layout = [], activeProfile = null, safeMode = true, llm = {}, connectors = [], flash, onClose, onUsed = () => {} } = $props();
+  let {
+    item,
+    mode = "auto",
+    profiles = [],
+    layout = [],
+    activeProfile = null,
+    safeMode = true,
+    llm = {},
+    connectors = [],
+    flash,
+    onClose,
+    onUsed = () => {},
+  } = $props();
 
   let values = $state({});
   let stepIdx = $state(0);
@@ -15,7 +36,9 @@
   function countUse() {
     if (counted || !item) return;
     counted = true;
-    libRecordUse(item.id).then(onUsed).catch(() => {});
+    libRecordUse(item.id)
+      .then(onUsed)
+      .catch(() => {});
   }
 
   // SOPs open on an OVERVIEW of all steps (hover a title → preview popup),
@@ -37,9 +60,6 @@
     clearTimeout(hoverTimer);
     hoverTimer = setTimeout(() => (hoverStep = null), 200);
   }
-  function stepHoverKeep() {
-    clearTimeout(hoverTimer);
-  }
 
   // Seed keys; prefill from the active profile (or a picked one) where present.
   $effect(() => {
@@ -51,6 +71,7 @@
     profileId = activeProfile ? activeProfile.id : "";
     stage = item && item.kind === "sop" ? "overview" : "single";
     hoverStep = null;
+    aiFilled = [];
   });
 
   function applyProfile() {
@@ -63,12 +84,20 @@
   let step = $derived(isSop ? item.steps[stepIdx] : null);
   let stepVars = $derived(step ? extractVars(step.text) : []);
   let templateVars = $derived(!isSop && item ? itemVars(item) : []);
-  let stepGroups = $derived(groupVarsByLayout(stepVars, layout).filter((g) => g.vars.length));
-  let templateGroups = $derived(groupVarsByLayout(templateVars, layout).filter((g) => g.vars.length));
+  let stepGroups = $derived(
+    groupVarsByLayout(stepVars, layout).filter((g) => g.vars.length),
+  );
+  let templateGroups = $derived(
+    groupVarsByLayout(templateVars, layout).filter((g) => g.vars.length),
+  );
   // The overview shows every variable across all steps, filled once up front.
   let allSopVars = $derived(isSop && item ? itemVars(item) : []);
-  let allSopGroups = $derived(groupVarsByLayout(allSopVars, layout).filter((g) => g.vars.length));
-  let isEmail = $derived(item && item.item_type === "email" && (item.subject || "").length > 0);
+  let allSopGroups = $derived(
+    groupVarsByLayout(allSopVars, layout).filter((g) => g.vars.length),
+  );
+  let isEmail = $derived(
+    item && item.item_type === "email" && (item.subject || "").length > 0,
+  );
 
   let preview = $derived.by(() => {
     if (!item) return "";
@@ -128,7 +157,9 @@
     }
   }
   async function copyAll() {
-    const text = (item.steps || []).map((s) => applyVars(s.text, values)).join("\n\n");
+    const text = (item.steps || [])
+      .map((s) => applyVars(s.text, values))
+      .join("\n\n");
     const ok = await clipCopy(text);
     flash(ok ? "Copied all steps" : "Copy failed");
     if (ok) {
@@ -156,7 +187,9 @@
     if (safeMode) {
       const missing = stillUnfilled(s.text);
       if (missing.length) {
-        flash(`Safe mode: fill ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} first`);
+        flash(
+          `Safe mode: fill ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} first`,
+        );
         return;
       }
     }
@@ -171,7 +204,11 @@
       variables: { ...values },
     };
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload), `Step ${i + 1}/${item.steps.length} · ${item.name}`);
+      const res = await connectorSend(
+        c.url,
+        JSON.stringify(payload),
+        `Step ${i + 1}/${item.steps.length} · ${item.name}`,
+      );
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent step ${i + 1} → ${c.name || "webhook"}`
@@ -186,6 +223,9 @@
   // context — never saved to any profile, just for this copy/send. ──
   let aiBusy = $state(false);
   let llmReady = $derived(!!(llm && llm.api_key));
+  // Variables the AI just filled — tinted green so you can eyeball their
+  // accuracy; editing a field clears its mark.
+  let aiFilled = $state([]);
   // Web research auto-checked: without it the model invents company facts,
   // which is exactly the weird-output failure mode. Untick per fill if wanted.
   let aiWeb = $state(true);
@@ -210,17 +250,34 @@
     }
     aiBusy = true;
     try {
-      const tone = profiles.find((p) => p.id === profileId)?.tone || activeProfile?.tone || "";
-      const body = await llmEnrich(JSON.stringify(values), "", aiWeb, tone, false, false, rawItemContext());
+      const tone =
+        profiles.find((p) => p.id === profileId)?.tone ||
+        activeProfile?.tone ||
+        "";
+      const body = await llmEnrich(
+        JSON.stringify(values),
+        "",
+        aiWeb,
+        tone,
+        false,
+        false,
+        rawItemContext(),
+      );
       const obj = JSON.parse(body);
-      let n = 0;
+      const got = [];
       for (const [k, v] of Object.entries(obj)) {
         if (empty.includes(k) && v) {
           values[k] = String(v);
-          n += 1;
+          got.push(k);
         }
       }
-      flash(n ? `AI filled ${n} variable${n === 1 ? "" : "s"} — not saved to the profile` : "The AI returned nothing usable");
+      aiFilled = [...aiFilled, ...got];
+      const n = got.length;
+      flash(
+        n
+          ? `AI filled ${n} variable${n === 1 ? "" : "s"} — not saved to the profile`
+          : "The AI returned nothing usable",
+      );
     } catch (e) {
       flash(String(e));
     }
@@ -233,10 +290,14 @@
   let sendOpen = $state(false);
   let sending = $state(false);
   const profileName = () =>
-    profiles.find((p) => p.id === profileId)?.name || activeProfile?.name || null;
+    profiles.find((p) => p.id === profileId)?.name ||
+    activeProfile?.name ||
+    null;
   function fullText() {
     // SOP → all steps filled and joined; template → the live preview.
-    return isSop ? (item.steps || []).map((s) => applyVars(s.text, values)).join("\n\n") : preview;
+    return isSop
+      ? (item.steps || []).map((s) => applyVars(s.text, values)).join("\n\n")
+      : preview;
   }
   async function copySubject() {
     const ok = await clipCopy(applyVars(item.subject || "", values));
@@ -251,9 +312,17 @@
   async function sendTo(c) {
     sendOpen = false;
     if (safeMode) {
-      const missing = stillUnfilled((item.subject || "") + "\n" + (isSop ? (item.steps || []).map((s) => s.text).join("\n") : item.text || ""));
+      const missing = stillUnfilled(
+        (item.subject || "") +
+          "\n" +
+          (isSop
+            ? (item.steps || []).map((s) => s.text).join("\n")
+            : item.text || ""),
+      );
       if (missing.length) {
-        flash(`Safe mode: fill ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} first`);
+        flash(
+          `Safe mode: fill ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} first`,
+        );
         return;
       }
     }
@@ -262,7 +331,11 @@
     // (--- separated), steps[] — filled with the CURRENT (live-edited) values.
     const payload = itemPayload(item, { ...values }, profileName());
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload), `Preview · ${item.name}`);
+      const res = await connectorSend(
+        c.url,
+        JSON.stringify(payload),
+        `Preview · ${item.name}`,
+      );
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent “${item.name}” → ${c.name || "webhook"}`
@@ -279,14 +352,18 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="overlay" onclick={(e) => e.target === e.currentTarget && onClose()}>
   <div class="modal wide">
-    <h3>{activeProfile ? "Preview" : isSop ? "Copy step-by-step" : "Fill & copy"} — {item.name}</h3>
+    <h3>
+      {activeProfile ? "Preview" : isSop ? "Copy step-by-step" : "Fill & copy"} —
+      {item.name}
+    </h3>
 
     {#if profiles.length}
       <label>
         Fill from a profile
         <select class="field" bind:value={profileId} onchange={applyProfile}>
           <option value="">— none —</option>
-          {#each profiles as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+          {#each profiles as p (p.id)}<option value={p.id}>{p.name}</option
+            >{/each}
         </select>
       </label>
     {/if}
@@ -296,31 +373,49 @@
       {#if allSopVars.length}
         <div class="fills">
           {#each allSopGroups as g}
-            {#if g.label}<div class="fgroup"><span>{g.label}</span><span class="fline"></span></div>{/if}
+            {#if g.label}<div class="fgroup">
+                <span>{g.label}</span><span class="fline"></span>
+              </div>{/if}
             {#each g.vars as v (v)}
-              <label class="fill-row"><span class="vchip">{v}</span><input class="field" bind:value={values[v]} /></label>
+              <label class="fill-row"
+                ><span class="vchip">{v}</span><input
+                  class="field"
+                  class:aifresh={aiFilled.includes(v)}
+                  bind:value={values[v]}
+                  oninput={() => (aiFilled = aiFilled.filter((x) => x !== v))}
+                /></label
+              >
             {/each}
           {/each}
         </div>
       {/if}
 
       <div class="ov-wrap">
-        <span class="preview-label">{item.steps.length} steps — hover to preview, click to jump in</span>
+        <span class="preview-label"
+          >{item.steps.length} steps — hover to preview, click to jump in</span
+        >
         <div class="ov-steps">
           {#each item.steps as s, i (s.id || i)}
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
             <div
               class="ov-step"
-              onmouseenter={(e) => stepEnter(e, i)}
-              onmouseleave={stepLeave}
               onclick={() => {
                 hoverStep = null;
                 stepIdx = i;
                 stage = "steps";
               }}
             >
-              <span class="ov-n">{i + 1}</span>
-              <span class="ov-title">{s.title || `Step ${i + 1}`}</span>
+              <!-- Only the number + title trigger the preview popup — hovering
+                   the action buttons must never cover them with it. -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span
+                class="ov-main"
+                onmouseenter={(e) => stepEnter(e, i)}
+                onmouseleave={stepLeave}
+              >
+                <span class="ov-n">{i + 1}</span>
+                <span class="ov-title">{s.title || `Step ${i + 1}`}</span>
+              </span>
               <span class="ov-acts">
                 <button
                   class="icon-btn xs"
@@ -355,9 +450,18 @@
       {#if stepVars.length}
         <div class="fills">
           {#each stepGroups as g}
-            {#if g.label}<div class="fgroup"><span>{g.label}</span><span class="fline"></span></div>{/if}
+            {#if g.label}<div class="fgroup">
+                <span>{g.label}</span><span class="fline"></span>
+              </div>{/if}
             {#each g.vars as v (v)}
-              <label class="fill-row"><span class="vchip">{v}</span><input class="field" bind:value={values[v]} /></label>
+              <label class="fill-row"
+                ><span class="vchip">{v}</span><input
+                  class="field"
+                  class:aifresh={aiFilled.includes(v)}
+                  bind:value={values[v]}
+                  oninput={() => (aiFilled = aiFilled.filter((x) => x !== v))}
+                /></label
+              >
             {/each}
           {/each}
         </div>
@@ -365,9 +469,18 @@
     {:else if templateVars.length}
       <div class="fills">
         {#each templateGroups as g}
-          {#if g.label}<div class="fgroup"><span>{g.label}</span><span class="fline"></span></div>{/if}
+          {#if g.label}<div class="fgroup">
+              <span>{g.label}</span><span class="fline"></span>
+            </div>{/if}
           {#each g.vars as v (v)}
-            <label class="fill-row"><span class="vchip">{v}</span><input class="field" bind:value={values[v]} /></label>
+            <label class="fill-row"
+              ><span class="vchip">{v}</span><input
+                class="field"
+                class:aifresh={aiFilled.includes(v)}
+                bind:value={values[v]}
+                oninput={() => (aiFilled = aiFilled.filter((x) => x !== v))}
+              /></label
+            >
           {/each}
         {/each}
       </div>
@@ -375,18 +488,35 @@
 
     {#if !isSop && isEmail}
       <div class="subj-row">
-        <span class="preview-label">Subject <span class="dim-note">— mapped separately in webhooks</span></span>
+        <span class="preview-label"
+          >Subject <span class="dim-note">— mapped separately in webhooks</span
+          ></span
+        >
         <div class="subj-line">
-          <div class="subj-box">{#each segment(item.subject) as s}{#if s.filled}<span class="fv">{s.t}</span>{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
-          <button class="icon-btn" title="Copy subject" onclick={copySubject}><Icon name="copy" size={14} /></button>
+          <div class="subj-box">
+            {#each segment(item.subject) as s}{#if s.filled}<span class="fv"
+                  >{s.t}</span
+                >{:else if s.v}<span class="ph">{s.t}</span
+                >{:else}{s.t}{/if}{/each}
+          </div>
+          <button class="icon-btn" title="Copy subject" onclick={copySubject}
+            ><Icon name="copy" size={14} /></button
+          >
         </div>
       </div>
     {/if}
 
     {#if !(isSop && stage === "overview")}
       <div class="preview-wrap">
-        <span class="preview-label">Preview — <span class="lg-filled">filled</span> · <span class="lg-empty">empty</span></span>
-        <div class="preview-box">{#each previewSegs as s}{#if s.filled}<span class="fv">{s.t}</span>{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
+        <span class="preview-label"
+          >Preview — <span class="lg-filled">filled</span> ·
+          <span class="lg-empty">empty</span></span
+        >
+        <div class="preview-box">
+          {#each previewSegs as s}{#if s.filled}<span class="fv">{s.t}</span
+              >{:else if s.v}<span class="ph">{s.t}</span
+              >{:else}{s.t}{/if}{/each}
+        </div>
       </div>
     {/if}
 
@@ -396,29 +526,42 @@
         <div class="aifill-wrap">
           <button
             class="ghost aifill"
+            style="color: #9095d6;"
             disabled={aiBusy}
             title="One AI call fills ONLY the empty variables using this template as context — nothing is saved to the profile"
             onclick={aiFill}
           >
-            <Icon name="sparkle" size={13} /> {aiBusy ? "Filling…" : "AI fill"}
+            <Icon name="edit" size={13} />
+            {aiBusy ? "Enriching…" : "AI enrich"}
           </button>
-          <label class="aiweb" title="The model researches the company live (OpenRouter :online) — untick for a purely offline fill">
+          <label
+            class="aiweb"
+            title="The model researches the company live (OpenRouter :online) — untick for a purely offline fill"
+          >
             <input type="checkbox" bind:checked={aiWeb} disabled={aiBusy} />
             <span>Web research</span>
           </label>
         </div>
       {/if}
+      <div class="ma-spacer"></div>
       {#if connectors.length}
         <div class="send-wrap">
-          <button class="ghost" disabled={sending} onclick={() => (sendOpen = !sendOpen)}>
-            <Icon name="webhook" size={13} /> {sending ? "Sending…" : "Send webhook ▾"}
+          <button
+            class="ghost"
+            disabled={sending}
+            onclick={() => (sendOpen = !sendOpen)}
+          >
+            <Icon name="webhook" size={13} />
+            {sending ? "Sending…" : "Send webhook ▾"}
           </button>
           {#if sendOpen}
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
             <div class="send-backdrop" onclick={() => (sendOpen = false)}></div>
             <div class="send-menu">
               {#each connectors as c (c.id)}
-                <button class="smi" onclick={() => sendTo(c)}>{c.name || c.url}</button>
+                <button class="smi" onclick={() => sendTo(c)}
+                  >{c.name || c.url}</button
+                >
               {/each}
             </div>
           {/if}
@@ -432,13 +575,23 @@
             hoverStep = null;
             stepIdx = 0;
             stage = "steps";
-          }}>Step-by-step →</button
+          }}>Steps →</button
         >
       {:else if isSop}
-        <button class="ghost" onclick={() => { hoverStep = null; stage = "overview"; }}>☰ Overview</button>
+        <button
+          class="ghost"
+          onclick={() => {
+            hoverStep = null;
+            stage = "overview";
+          }}>☰ Overview</button
+        >
         <button class="ghost" onclick={copyAll}>Copy all</button>
-        <button class="ghost" onclick={prev} disabled={stepIdx === 0}>← Prev</button>
-        <button class="btn" onclick={copyThis}>{isLastStep ? "Copy & finish" : "Copy & next →"}</button>
+        <button class="ghost" onclick={prev} disabled={stepIdx === 0}
+          >← Prev</button
+        >
+        <button class="btn" onclick={copyThis}
+          >{isLastStep ? "Copy & finish" : "Copy & next →"}</button
+        >
       {:else}
         <button class="btn" onclick={copyThis}>Copy</button>
       {/if}
@@ -449,25 +602,38 @@
 {#if stepSend}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="ss-backdrop" onclick={() => (stepSend = null)}></div>
-  <div class="ss-menu" style:left="{Math.min(stepSend.x, window.innerWidth - 240)}px" style:top="{stepSend.y}px">
-    <div class="ss-label"><Icon name="webhook" size={12} /> Send step {stepSend.idx + 1} to</div>
+  <div
+    class="ss-menu"
+    style:left="{Math.min(stepSend.x, window.innerWidth - 240)}px"
+    style:top="{stepSend.y}px"
+  >
+    <div class="ss-label">
+      <Icon name="webhook" size={12} /> Send step {stepSend.idx + 1} to
+    </div>
     {#each connectors as c (c.id)}
-      <button class="smi" onclick={() => sendStepTo(stepSend.idx, c)}>{c.name || c.url}</button>
+      <button class="smi" onclick={() => sendStepTo(stepSend.idx, c)}
+        >{c.name || c.url}</button
+      >
     {/each}
   </div>
 {/if}
 
 {#if hoverStep && item.steps[hoverStep.idx]}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- Read-only peek: pointer-events none, so even while visible it can never
+       swallow a click meant for a step's copy/send buttons. -->
   <div
     class="step-pop"
     style:left="{hoverStep.x}px"
     style:top="{hoverStep.y}px"
-    onmouseenter={stepHoverKeep}
-    onmouseleave={stepLeave}
   >
-    <span class="sp-title">{item.steps[hoverStep.idx].title || `Step ${hoverStep.idx + 1}`}</span>
-    <div class="sp-body">{#each segment(item.steps[hoverStep.idx].text) as s}{#if s.filled}<span class="fv">{s.t}</span>{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}</div>
+    <span class="sp-title"
+      >{item.steps[hoverStep.idx].title || `Step ${hoverStep.idx + 1}`}</span
+    >
+    <div class="sp-body">
+      {#each segment(item.steps[hoverStep.idx].text) as s}{#if s.filled}<span
+            class="fv">{s.t}</span
+          >{:else if s.v}<span class="ph">{s.t}</span>{:else}{s.t}{/if}{/each}
+    </div>
   </div>
 {/if}
 
@@ -567,9 +733,12 @@
     border-radius: 3px;
     padding: 0 4px;
   }
+  /* Pushes Send webhook + Copy to the right, Close + AI fill stay left. */
+  .ma-spacer {
+    flex: 1;
+  }
   .send-wrap {
     position: relative;
-    margin-right: auto;
   }
   .send-backdrop {
     position: fixed;
@@ -579,7 +748,7 @@
   .send-menu {
     position: absolute;
     bottom: calc(100% + 6px);
-    left: 0;
+    right: 0;
     z-index: 91;
     min-width: 190px;
     background: var(--surface);
@@ -632,11 +801,20 @@
     cursor: pointer;
     font-size: 13.5px;
     padding: 10px 12px;
-    transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+    transition:
+      border-color 0.12s var(--ease),
+      background 0.12s var(--ease);
   }
   .ov-step:hover {
     border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
     background: var(--elevated);
+  }
+  .ov-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
   }
   .ov-n {
     display: inline-flex;
@@ -686,6 +864,11 @@
   .aifill {
     color: var(--accent-strong);
   }
+  /* A value the AI just wrote — green until you touch (= vet) it. */
+  .field.aifresh {
+    border-color: color-mix(in srgb, #6fb894 55%, var(--border));
+    background: color-mix(in srgb, #6fb894 9%, var(--well));
+  }
   .aifill-wrap {
     display: inline-flex;
     align-items: center;
@@ -693,8 +876,11 @@
   }
   .aiweb {
     display: inline-flex;
+    /* The global `.modal label` rule stacks labels vertically — this one is a
+       checkbox + text side by side. */
+    flex-direction: row;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     font-size: 12px;
     color: var(--muted);
     cursor: pointer;
@@ -730,10 +916,12 @@
     padding: 5px 9px 2px;
   }
 
-  /* Hover popup: the step's filled message, beside the row. */
+  /* Hover popup: the step's filled message, beside the row. Never clickable —
+     clicks pass straight through to whatever it happens to cover. */
   .step-pop {
     position: fixed;
     z-index: 110;
+    pointer-events: none;
     width: 400px;
     max-height: 320px;
     overflow-y: auto;

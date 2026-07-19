@@ -17,7 +17,14 @@
     pickSaveDoc,
     saveTextFile,
   } from "./api.js";
-  import { extractVars, itemVars, itemPlainText, applyVars, itemPayload, selectionPayload } from "./vars.js";
+  import {
+    extractVars,
+    itemVars,
+    itemPlainText,
+    applyVars,
+    itemPayload,
+    selectionPayload,
+  } from "./vars.js";
   import Icon from "./Icon.svelte";
   import FolderIcon from "./FolderIcon.svelte";
   import { FOLDER_ICON_NAMES, FOLDER_COLORS } from "./foldericons.js";
@@ -28,18 +35,25 @@
     profiles = [],
     layout = [],
     activeProfile = null,
-    compact = false,
+    viewMode = "full", // full | compact | super
     safeMode = true,
     connectors = [],
     flash,
     onFill,
   } = $props();
 
+  // View density: compact drops previews/tags; super shows name-only cards
+  // whose Copy/View actions appear on hover.
+  let compact = $derived(viewMode !== "full");
+  let superC = $derived(viewMode === "super");
+
   // Safe mode: variables still unfilled after applying the active profile
   // (auto {{today}}/{{now}} tokens always resolve, so they never count).
   function unfilledIn(item) {
     const vals = activeProfile?.values || {};
-    return extractVars(applyVars((item.subject || "") + "\n" + itemPlainText(item), vals));
+    return extractVars(
+      applyVars((item.subject || "") + "\n" + itemPlainText(item), vals),
+    );
   }
 
   const ALL = "__all";
@@ -326,7 +340,12 @@
     fFolderId = folderId;
     fName = item.name;
     fTags = (item.tags || []).join(", ");
-    fType = item.kind === "sop" ? "sop" : item.item_type === "email" ? "email" : "text";
+    fType =
+      item.kind === "sop"
+        ? "sop"
+        : item.item_type === "email"
+          ? "email"
+          : "text";
     fSubject = item.subject || "";
     fText = item.text || "";
     fSteps = (item.steps || []).map((s) => ({ ...s }));
@@ -459,14 +478,24 @@
     if (safeMode) {
       const missing = unfilledIn(item);
       if (missing.length) {
-        flash(`Safe mode: fill ${missing.length} variable${missing.length === 1 ? "" : "s"} first (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""})`);
+        flash(
+          `Safe mode: fill ${missing.length} variable${missing.length === 1 ? "" : "s"} first (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""})`,
+        );
         onFill(item, item.kind === "sop" ? "steps" : "auto");
         return;
       }
     }
-    const payload = itemPayload(item, activeProfile?.values || {}, activeProfile?.name || null);
+    const payload = itemPayload(
+      item,
+      activeProfile?.values || {},
+      activeProfile?.name || null,
+    );
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload), `Item · ${item.name}`);
+      const res = await connectorSend(
+        c.url,
+        JSON.stringify(payload),
+        `Item · ${item.name}`,
+      );
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent “${item.name}”${activeProfile ? ` · ${activeProfile.name}` : ""} → ${c.name || "webhook"}`
@@ -487,13 +516,23 @@
     if (safeMode) {
       const blocked = items.filter((i) => unfilledIn(i).length);
       if (blocked.length) {
-        flash(`Safe mode: ${blocked.length} of ${items.length} selected item${items.length === 1 ? "" : "s"} still ${blocked.length === 1 ? "has" : "have"} unfilled {{variables}}`);
+        flash(
+          `Safe mode: ${blocked.length} of ${items.length} selected item${items.length === 1 ? "" : "s"} still ${blocked.length === 1 ? "has" : "have"} unfilled {{variables}}`,
+        );
         return;
       }
     }
-    const payload = selectionPayload(items, activeProfile?.values || {}, activeProfile?.name || null);
+    const payload = selectionPayload(
+      items,
+      activeProfile?.values || {},
+      activeProfile?.name || null,
+    );
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload), `Selection · ${items.length} items`);
+      const res = await connectorSend(
+        c.url,
+        JSON.stringify(payload),
+        `Selection · ${items.length} items`,
+      );
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent ${items.length} item${items.length === 1 ? "" : "s"} → ${c.name || "webhook"}`
@@ -542,6 +581,14 @@
     }
     return out;
   });
+
+  // The selection-bar Send lights up only when the active profile fills EVERY
+  // variable across every selected item (same meaning as a lit card button).
+  let selectionReady = $derived(
+    !!activeProfile &&
+      selectedEntries.length > 0 &&
+      selectedEntries.every((e) => unfilledIn(e.item).length === 0),
+  );
 
   // One combined document: each item as a "## Name" section, in picked order.
   // SOP steps are expanded so a custom SOP reads as a clean sequence.
@@ -756,16 +803,21 @@
         No items{search || selectedTags.length ? " match" : " yet"}.
       </p>
     {:else}
-      <div class="grid">
+      <div class="grid" class:super={superC}>
         {#each visible as { item, folderId, folderName, folderColor } (item.id)}
           {@const vars = itemVars(item)}
           {@const pos = selIndex(item.id)}
+          {@const missing = activeProfile ? unfilledIn(item) : []}
+          {@const ready =
+            !!activeProfile && vars.length > 0 && missing.length === 0}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <article
             class="card"
             class:fav={item.favorite}
             class:sel={pos >= 0}
             class:compact
+            class:super={superC}
+            class:ready
             class:ghost={drag?.kind === "item" && drag.id === item.id}
             class:drop-before={dropOnId === item.id && !dropAfter}
             class:drop-after={dropOnId === item.id && dropAfter}
@@ -814,11 +866,14 @@
               {#if connectors.length}
                 <button
                   class="icon-btn xs"
-                  class:filled={!!activeProfile}
-                  title={activeProfile
-                    ? `Send filled with ${activeProfile.name} + its variables`
-                    : "Send to webhook"}
-                  onclick={(e) => (sendMenu = { item, x: e.clientX, y: e.clientY })}
+                  class:filled={ready}
+                  title={ready
+                    ? `Send filled with ${activeProfile.name} — every variable covered`
+                    : activeProfile && missing.length
+                      ? `Send to webhook — ${missing.length} variable${missing.length === 1 ? "" : "s"} still unfilled with ${activeProfile.name}`
+                      : "Send to webhook"}
+                  onclick={(e) =>
+                    (sendMenu = { item, x: e.clientX, y: e.clientY })}
                   ><Icon name="webhook" size={14} /></button
                 >
               {/if}
@@ -844,7 +899,8 @@
                   ><Icon name="sop" size={11} />{item.steps.length}</span
                 >{:else if item.item_type === "email"}<span
                   class="sop-badge"
-                  title="Email — subject is mapped separately in webhooks">✉</span
+                  title="Email — subject is mapped separately in webhooks"
+                  >✉</span
                 >{/if}
             </div>
 
@@ -878,10 +934,15 @@
             <footer>
               <button
                 class="act"
-                class:filled={!!activeProfile}
-                title={activeProfile ? `Copies filled with ${activeProfile.name}` : "Copy"}
+                class:filled={ready}
+                title={ready
+                  ? `Copies filled with ${activeProfile.name} — every variable covered`
+                  : activeProfile && missing.length
+                    ? `Copy — ${missing.length} variable${missing.length === 1 ? "" : "s"} still unfilled with ${activeProfile.name}`
+                    : "Copy"}
                 onclick={() => copyItem(item)}
-                ><Icon name="copy" size={13} /> Copy</button
+                ><Icon name="copy" size={13} />
+                <span class="act-t">Copy</span></button
               >
               {#if vars.length || item.kind === "sop"}
                 <button
@@ -889,11 +950,8 @@
                   onclick={() =>
                     onFill(item, item.kind === "sop" ? "steps" : "auto")}
                 >
-                  <Icon
-                    name={activeProfile ? "eye" : item.kind === "sop" ? "sop" : "sparkle"}
-                    size={13}
-                  />
-                  {activeProfile ? "Preview" : "Fill & copy"}
+                  <Icon name="eye" size={13} />
+                  <span class="act-t">View</span>
                 </button>
               {/if}
             </footer>
@@ -913,17 +971,26 @@
             <div class="selsend-wrap">
               <button
                 class="ghost"
-                class:filled={!!activeProfile}
-                title="One payload: each item + combined + combined with --- page breaks"
+                class:filled={selectionReady}
+                title={selectionReady
+                  ? `One payload, fully filled with ${activeProfile.name}: each item + combined + combined with --- page breaks`
+                  : "One payload: each item + combined + combined with --- page breaks"}
                 onclick={() => (selSendOpen = !selSendOpen)}
                 ><Icon name="webhook" size={14} /> Send ▾</button
               >
               {#if selSendOpen}
                 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                <div class="ctx-backdrop" onclick={() => (selSendOpen = false)}></div>
+                <div
+                  class="ctx-backdrop"
+                  onclick={() => (selSendOpen = false)}
+                ></div>
                 <div class="selsend-menu">
                   {#each connectors as c (c.id)}
-                    <button class="ctx-item sub" onclick={() => sendSelectionTo(c)}>{c.name || c.url}</button>
+                    <button
+                      class="ctx-item sub"
+                      onclick={() => sendSelectionTo(c)}
+                      >{c.name || c.url}</button
+                    >
                   {/each}
                 </div>
               {/if}
@@ -976,13 +1043,25 @@
       <div class="fld">
         <span class="fld-label">Type</span>
         <div class="typeseg">
-          <button class="tseg" class:on={fType === "text"} onclick={() => setType("text")}>
+          <button
+            class="tseg"
+            class:on={fType === "text"}
+            onclick={() => setType("text")}
+          >
             <Icon name="template" size={13} /> Text
           </button>
-          <button class="tseg" class:on={fType === "email"} onclick={() => setType("email")}>
+          <button
+            class="tseg"
+            class:on={fType === "email"}
+            onclick={() => setType("email")}
+          >
             ✉ Email
           </button>
-          <button class="tseg" class:on={fType === "sop"} onclick={() => setType("sop")}>
+          <button
+            class="tseg"
+            class:on={fType === "sop"}
+            onclick={() => setType("sop")}
+          >
             <Icon name="sop" size={13} /> SOP
           </button>
         </div>
@@ -992,7 +1071,10 @@
         {#if fType === "email"}
           <label class="fld">
             <span class="fld-label"
-              >Email subject <span class="dim">— sent separately from the email text in webhooks, so Make/n8n can map it on its own; {"{{variables}}"} work here too</span></span
+              >Email subject <span class="dim"
+                >— sent separately from the email text in webhooks, so Make/n8n
+                can map it on its own; {"{{variables}}"} work here too</span
+              ></span
             >
             <input
               class="field"
@@ -1002,12 +1084,16 @@
           </label>
         {/if}
         <label class="fld">
-          <span class="fld-label">{fType === "email" ? "Email text" : "Prompt text"}</span>
+          <span class="fld-label"
+            >{fType === "email" ? "Email text" : "Prompt text"}</span
+          >
           <textarea
             class="field"
             rows="9"
             bind:value={fText}
-            placeholder={fType === "email" ? "The email body…" : "Enter your prompt here…"}
+            placeholder={fType === "email"
+              ? "The email body…"
+              : "Enter your prompt here…"}
           ></textarea>
           <span class="charcount">{(fText || "").length} characters</span>
         </label>
@@ -1289,7 +1375,9 @@
     </button>
     {#if connectors.length}
       <div class="ctx-sep"></div>
-      <div class="ctx-label"><Icon name="webhook" size={12} /> Send to webhook</div>
+      <div class="ctx-label">
+        <Icon name="webhook" size={12} /> Send to webhook
+      </div>
       {#each connectors as c (c.id)}
         <button
           class="ctx-item sub"
@@ -1315,9 +1403,18 @@
 
 {#if sendMenu}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="ctx-backdrop" onclick={() => (sendMenu = null)} oncontextmenu={(e) => { e.preventDefault(); sendMenu = null; }}></div>
+  <div
+    class="ctx-backdrop"
+    onclick={() => (sendMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      sendMenu = null;
+    }}
+  ></div>
   <div class="ctx-menu" style:left="{sendMenu.x}px" style:top="{sendMenu.y}px">
-    <div class="ctx-label"><Icon name="webhook" size={12} /> Send to webhook</div>
+    <div class="ctx-label">
+      <Icon name="webhook" size={12} /> Send to webhook
+    </div>
     {#each connectors as c (c.id)}
       <button
         class="ctx-item sub"
@@ -1881,6 +1978,69 @@
     gap: 6px;
     padding: 11px 14px;
   }
+
+  /* ── Super compact: name-only rows in a denser grid. Copy/View are hidden
+     until the card is hovered, then appear icon-only at the right edge. ── */
+  .grid.super {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 9px;
+  }
+  .card.super {
+    gap: 0;
+    padding: 10px 12px;
+  }
+  .card.super .name {
+    -webkit-line-clamp: 1;
+    font-size: 13.5px;
+  }
+  .card.super .hover-actions {
+    display: none; /* right-click menu covers edit/pin/delete here */
+  }
+  .card.super footer {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    z-index: 2;
+    margin: 0;
+    padding: 0 0 0 10px;
+    gap: 4px;
+    opacity: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, var(--surface) 22%);
+    transition: opacity 0.12s var(--ease);
+  }
+  .card.super:hover footer {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .card.super footer .act {
+    padding: 5px 7px;
+    background: var(--elevated);
+  }
+  .card.super footer .act.filled {
+    background: color-mix(in srgb, var(--accent) 14%, var(--elevated));
+  }
+  .card.super .act-t {
+    display: none;
+  }
+  /* "Everything's filled by this profile": a small light along the bottom
+     edge — on hover the lit Copy button takes over, so the light steps back. */
+  .card.super.ready::after {
+    content: "";
+    position: absolute;
+    left: 14%;
+    right: 14%;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 75%, transparent);
+    transition: opacity 0.12s var(--ease);
+  }
+  .card.super.ready:hover::after {
+    opacity: 0;
+  }
   .selnum {
     position: absolute;
     top: -9px;
@@ -1953,7 +2113,10 @@
     color: var(--muted);
     cursor: pointer;
     font-size: 13px;
-    transition: border-color 0.12s var(--ease), color 0.12s var(--ease), background 0.12s var(--ease);
+    transition:
+      border-color 0.12s var(--ease),
+      color 0.12s var(--ease),
+      background 0.12s var(--ease);
   }
   .tseg:hover {
     color: var(--text);

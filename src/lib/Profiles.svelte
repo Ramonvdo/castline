@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from "svelte";
   import { allLibraryVars } from "./vars.js";
   import {
     profilesSave,
@@ -76,7 +77,10 @@
     // Only variables that are live: used somewhere in the library right now, or
     // already holding a value in this profile. Stale layout entries (vars whose
     // prompts were deleted) keep their stored ordering but don't render.
-    const live = new Set([...allLibraryVars(folders), ...Object.keys(profileValues || {})]);
+    const live = new Set([
+      ...allLibraryVars(folders),
+      ...Object.keys(profileValues || {}),
+    ]);
     const known = new Set();
     const out = [];
     for (const e of layout) {
@@ -117,11 +121,34 @@
     slots = buildSlots(p.values);
     valueMap = seedValues(slots, p.values);
   }
-  function backToList() {
-    editingId = null;
+  async function backToList() {
     hoverVar = null; // never let the hover panel outlive the editor
     addingVar = false;
+    // Auto-save on the way out — leaving the editor must never lose edits.
+    if (editingId !== null && name.trim()) {
+      await save();
+      return;
+    }
+    if (editingId === "" && !name.trim()) flash("Discarded — no profile name");
+    editingId = null;
   }
+
+  // Tab switches unmount this view: flush an open editor the same way.
+  onDestroy(() => {
+    if (editingId !== null && name.trim()) {
+      persistLayout().catch(() => {});
+      profilesSave({
+        id: editingId || "",
+        name: name.trim(),
+        values: collectValues(),
+        source: "manual",
+        tone: pTone.trim(),
+        locked: pLocked,
+      })
+        .then(onData)
+        .catch(() => {});
+    }
+  });
 
   function toLayout(sl) {
     return sl.map((s) =>
@@ -184,12 +211,7 @@
     overIndex = -1;
   }
 
-  async function save() {
-    const nm = name.trim();
-    if (!nm) {
-      flash("Profile name is required");
-      return;
-    }
+  function collectValues() {
     const values = {};
     for (const s of slots) {
       if (s.type !== "var") continue;
@@ -197,11 +219,19 @@
       const val = valueMap[s.name];
       if (val !== undefined && val !== "") values[s.name] = val;
     }
+    return values;
+  }
+  async function save() {
+    const nm = name.trim();
+    if (!nm) {
+      flash("Profile name is required");
+      return;
+    }
     await persistLayout();
     const data = await profilesSave({
       id: editingId || "",
       name: nm,
-      values,
+      values: collectValues(),
       source: "manual",
       tone: pTone.trim(),
       locked: pLocked,
@@ -279,7 +309,11 @@
     }
     connBusy = true;
     try {
-      const res = await connectorSend(c.url, JSON.stringify(seedObj), "New profile from connector");
+      const res = await connectorSend(
+        c.url,
+        JSON.stringify(seedObj),
+        "New profile from connector",
+      );
       const obj = parseObj(res.body);
       if (!obj) {
         flash(
@@ -297,17 +331,29 @@
     }
     connBusy = false;
   }
+  // Freshly AI-generated values this session: profileId -> [varNames]. Shown
+  // green in the editor (and as a badge in the list) until the user edits —
+  // i.e. vets — each one.
+  let aiFresh = $state({});
+  function clearAiMark(varName) {
+    const id = editingId;
+    if (!id || !(aiFresh[id] || []).includes(varName)) return;
+    aiFresh = { ...aiFresh, [id]: aiFresh[id].filter((n) => n !== varName) };
+  }
+
   // Merge an enrichment result (object of name → value) into a profile.
   // Locked-empty variables are never written by any enrich path.
-  async function mergeEnriched(p, obj, label) {
+  async function mergeEnriched(p, obj, label, markAi = false) {
     const locked = p.locked || [];
     const merged = { ...p.values };
-    let n = 0;
+    const written = [];
     for (const [k, v] of Object.entries(obj)) {
       if (locked.includes(k)) continue;
       merged[k] = strval(v);
-      n += 1;
+      written.push(k);
     }
+    const n = written.length;
+    if (markAi) aiFresh = { ...aiFresh, [p.id]: written };
     const data = await profilesSave({
       id: p.id,
       name: p.name,
@@ -324,7 +370,11 @@
     enrichForId = null;
     enrichBusy = true;
     try {
-      const res = await connectorSend(c.url, JSON.stringify(p.values), `Enrich · ${p.name}`);
+      const res = await connectorSend(
+        c.url,
+        JSON.stringify(p.values),
+        `Enrich · ${p.name}`,
+      );
       const obj = parseObj(res.body);
       if (!obj) {
         flash(`Connector returned no JSON (status ${res.status})`);
@@ -385,12 +435,19 @@
       ]
         .filter(Boolean)
         .join("\n\n");
-      const body = await llmEnrich(JSON.stringify(p.values), ctx, aiWeb, p.tone || "", aiTone, aiLib);
+      const body = await llmEnrich(
+        JSON.stringify(p.values),
+        ctx,
+        aiWeb,
+        p.tone || "",
+        aiTone,
+        aiLib,
+      );
       const obj = parseObj(body);
       if (!obj || !Object.keys(obj).length) {
         flash("The AI returned no fields");
       } else {
-        await mergeEnriched(p, obj, "Castline AI");
+        await mergeEnriched(p, obj, "Castline AI", true);
         aiPanel = null;
       }
     } catch (e) {
@@ -415,7 +472,11 @@
       profiles: profiles.map((p) => ({ name: p.name, values: p.values })),
     };
     try {
-      const res = await connectorSend(c.url, JSON.stringify(payload), `Send all profiles (${profiles.length})`);
+      const res = await connectorSend(
+        c.url,
+        JSON.stringify(payload),
+        `Send all profiles (${profiles.length})`,
+      );
       flash(
         res.status >= 200 && res.status < 300
           ? `Sent ${profiles.length} profile${profiles.length === 1 ? "" : "s"} → ${c.name || "webhook"}`
@@ -528,6 +589,13 @@
             {#if p.source && p.source !== "manual"}<span class="srcbadge"
                 >{p.source}</span
               >{/if}
+            {#if (aiFresh[p.id] || []).length}
+              <span
+                class="aibadge"
+                title="Fields just generated by Castline AI — open Edit to review the green-highlighted values"
+                >✦ {aiFresh[p.id].length} AI</span
+              >
+            {/if}
             <span class="muted">{Object.keys(p.values).length} value(s)</span>
             <div class="enrich-wrap">
               <button
@@ -552,8 +620,8 @@
                       : "Add an OpenRouter key in Settings → AI workflow"}
                     onclick={() => openAiPanel(p)}
                   >
-                    <Icon name="sparkle" size={13} /> Castline AI{llmReady
-                      ? "…"
+                    <span style="color:#9095d6">Castline AI</span>{llmReady
+                      ? ""
                       : " (no API key)"}
                   </button>
                   {#if connectors.length}
@@ -572,7 +640,8 @@
               {/if}
             </div>
             <button class="link" onclick={() => editProfile(p)}>Edit</button>
-            <button class="link danger" onclick={() => (pendingDelete = p)}>Delete</button
+            <button class="link danger" onclick={() => (pendingDelete = p)}
+              >Delete</button
             >
           </li>
         {/each}
@@ -637,11 +706,20 @@
               <input
                 class="field vval"
                 class:lockedv={pLocked.includes(s.name)}
+                class:aifresh={editingId &&
+                  (aiFresh[editingId] || []).includes(s.name)}
                 bind:value={valueMap[s.name]}
                 disabled={pLocked.includes(s.name)}
-                placeholder={pLocked.includes(s.name) ? "locked — fill on the spot, never enriched" : "value"}
+                placeholder={pLocked.includes(s.name)
+                  ? "locked — fill on the spot, never enriched"
+                  : "value"}
+                oninput={() => clearAiMark(s.name)}
                 onmouseenter={(e) => varEnter(e, s.name)}
                 onmouseleave={varLeave}
+                title={editingId &&
+                (aiFresh[editingId] || []).includes(s.name)
+                  ? "Just generated by Castline AI — check it; editing clears the highlight"
+                  : undefined}
               />
               <button
                 class="icon-btn lockbtn"
@@ -684,7 +762,13 @@
               }}
             />
             <button class="btn sm" onclick={addVariable}>Add</button>
-            <button class="ghost sm" onclick={() => { addingVar = false; newVarName = ""; }}>Cancel</button>
+            <button
+              class="ghost sm"
+              onclick={() => {
+                addingVar = false;
+                newVarName = "";
+              }}>Cancel</button
+            >
           </div>
         {:else}
           <button class="ghost" onclick={() => (addingVar = true)}
@@ -698,16 +782,25 @@
 
 {#if pendingDelete}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="ai-overlay" onclick={(e) => e.target === e.currentTarget && (pendingDelete = null)}>
+  <div
+    class="ai-overlay"
+    onclick={(e) => e.target === e.currentTarget && (pendingDelete = null)}
+  >
     <div class="ai-modal confirm">
       <div class="ai-head"><h3>Delete profile</h3></div>
       <p class="ai-sub">
-        Are you sure you want to delete <strong>“{pendingDelete.name}”</strong>? Its
-        {Object.keys(pendingDelete.values || {}).length} value(s) will be gone. This can't be undone.
+        Are you sure you want to delete <strong>“{pendingDelete.name}”</strong>?
+        Its
+        {Object.keys(pendingDelete.values || {}).length} value(s) will be gone. This
+        can't be undone.
       </p>
       <div class="ai-actions">
-        <button class="ghost" onclick={() => (pendingDelete = null)}>Cancel</button>
-        <button class="ghost danger" onclick={confirmRemove}><Icon name="trash" size={14} /> Delete</button>
+        <button class="ghost" onclick={() => (pendingDelete = null)}
+          >Cancel</button
+        >
+        <button class="ghost danger" onclick={confirmRemove}
+          ><Icon name="trash" size={14} /> Delete</button
+        >
       </div>
     </div>
   </div>
@@ -723,22 +816,41 @@
     onmouseleave={varLeave}
   >
     <span class="hp-name">{hoverVar.name}</span>
-    <textarea class="field hp-text" rows="9" bind:value={valueMap[hoverVar.name]}></textarea>
+    <textarea
+      class="field hp-text"
+      rows="9"
+      bind:value={valueMap[hoverVar.name]}
+      oninput={() => clearAiMark(hoverVar.name)}
+    ></textarea>
     <span class="hp-hint">Edits apply live — remember to Save profile.</span>
   </div>
 {/if}
 
 {#if aiPanel}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="ai-overlay" onclick={(e) => e.target === e.currentTarget && !enrichBusy && (aiPanel = null)}>
+  <div
+    class="ai-overlay"
+    onclick={(e) =>
+      e.target === e.currentTarget && !enrichBusy && (aiPanel = null)}
+  >
     <div class="ai-modal">
       <div class="ai-head">
-        <h3><Icon name="sparkle" size={16} /> Enrich “{aiPanel.profile.name}” with Castline AI</h3>
-        <button class="icon-btn" title="Close" disabled={enrichBusy} onclick={() => (aiPanel = null)}><Icon name="close" size={16} /></button>
+        <h3>
+          <Icon name="sparkle" size={16} /> Enrich “{aiPanel.profile.name}” with
+          Castline AI
+        </h3>
+        <button
+          class="icon-btn"
+          title="Close"
+          disabled={enrichBusy}
+          onclick={() => (aiPanel = null)}
+          ><Icon name="close" size={16} /></button
+        >
       </div>
       <p class="ai-sub">
-        One AI call fills the library's variables from the profile's current values, your variable
-        descriptions, and any extra information you add below.
+        One AI call fills the library's variables from the profile's current
+        values, your variable descriptions, and any extra information you add
+        below.
       </p>
 
       <label class="ai-fld">
@@ -754,12 +866,21 @@
       <div class="ai-row">
         {#if aiFile}
           <span class="ai-file" title="Attached file">
-            <Icon name="template" size={13} /> {aiFile.name}
-            <span class="ai-size">{Math.ceil(aiFile.text.length / 1000)} k</span>
-            <button class="icon-btn xs" title="Remove file" onclick={() => (aiFile = null)}><Icon name="close" size={12} /></button>
+            <Icon name="template" size={13} />
+            {aiFile.name}
+            <span class="ai-size">{Math.ceil(aiFile.text.length / 1000)} k</span
+            >
+            <button
+              class="icon-btn xs"
+              title="Remove file"
+              onclick={() => (aiFile = null)}
+              ><Icon name="close" size={12} /></button
+            >
           </span>
         {:else}
-          <button class="ghost sm" onclick={attachAiFile}><Icon name="plus" size={13} /> Attach a .txt / .md file</button>
+          <button class="ghost sm" onclick={attachAiFile}
+            ><Icon name="plus" size={13} /> Attach a .txt / .md file</button
+          >
         {/if}
       </div>
 
@@ -790,7 +911,11 @@
       </div>
 
       <div class="ai-actions">
-        <button class="ghost" disabled={enrichBusy} onclick={() => (aiPanel = null)}>Cancel</button>
+        <button
+          class="ghost"
+          disabled={enrichBusy}
+          onclick={() => (aiPanel = null)}>Cancel</button
+        >
         <button class="btn" disabled={enrichBusy} onclick={runAiEnrich}>
           {enrichBusy ? "Researching…" : "Enrich profile"}
         </button>
@@ -1020,6 +1145,20 @@
   .vval.lockedv {
     opacity: 0.55;
     border-style: dashed;
+  }
+  /* A value the AI just wrote — green until you touch (= vet) it. */
+  .vval.aifresh {
+    border-color: color-mix(in srgb, #6fb894 55%, var(--border));
+    background: color-mix(in srgb, #6fb894 9%, var(--well));
+  }
+  .aibadge {
+    font-size: 10px;
+    font-weight: 600;
+    color: #86c7a4;
+    border: 1px solid rgba(111, 184, 148, 0.4);
+    border-radius: 5px;
+    padding: 1px 6px;
+    white-space: nowrap;
   }
   .lockbtn {
     flex-shrink: 0;
