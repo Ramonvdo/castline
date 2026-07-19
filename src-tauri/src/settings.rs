@@ -57,7 +57,10 @@ pub struct LlmConfig {
     #[serde(default = "default_model")]
     pub model: String,
     /// Append `:online` to the model so OpenRouter runs live web search.
-    #[serde(default)]
+    /// Defaults ON — without research the model invents company facts, which
+    /// is exactly the "weird icebreaker" failure mode. The enrich dialogs
+    /// auto-check their box from this; users untick per run (or here).
+    #[serde(default = "default_true")]
     pub web_search: bool,
     /// Tone of voice for generated text values. Prefilled with a suggested
     /// default on first run (like the model field) so setup is fast — but it's
@@ -69,7 +72,7 @@ pub struct LlmConfig {
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        Self { api_key: String::new(), model: default_model(), web_search: false, tone: default_tone() }
+        Self { api_key: String::new(), model: default_model(), web_search: true, tone: default_tone() }
     }
 }
 
@@ -360,6 +363,12 @@ mod tests {
         assert!(cfg.schedules.is_empty());
         assert!(cfg.llm.api_key.is_empty());
         assert_eq!(cfg.llm.model, "google/gemini-2.5-flash");
+        // Web research defaults ON (no research = invented company facts);
+        // an explicit false still round-trips.
+        assert!(cfg.llm.web_search);
+        let no_web: AppSettings =
+            serde_json::from_str(r#"{ "llm": { "web_search": false } }"#).unwrap();
+        assert!(!no_web.llm.web_search);
         assert!(cfg.autostart);
         // Tone arrives PREFILLED (a starter suggestion, not a hidden fallback)…
         assert!(cfg.llm.tone.contains("em dashes"));

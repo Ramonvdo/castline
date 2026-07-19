@@ -819,7 +819,7 @@
                     ? `Send filled with ${activeProfile.name} + its variables`
                     : "Send to webhook"}
                   onclick={(e) => (sendMenu = { item, x: e.clientX, y: e.clientY })}
-                  ><Icon name="plug" size={14} /></button
+                  ><Icon name="webhook" size={14} /></button
                 >
               {/if}
               <button
@@ -916,7 +916,7 @@
                 class:filled={!!activeProfile}
                 title="One payload: each item + combined + combined with --- page breaks"
                 onclick={() => (selSendOpen = !selSendOpen)}
-                ><Icon name="plug" size={14} /> Send ▾</button
+                ><Icon name="webhook" size={14} /> Send ▾</button
               >
               {#if selSendOpen}
                 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -1289,7 +1289,7 @@
     </button>
     {#if connectors.length}
       <div class="ctx-sep"></div>
-      <div class="ctx-label"><Icon name="plug" size={12} /> Send to webhook</div>
+      <div class="ctx-label"><Icon name="webhook" size={12} /> Send to webhook</div>
       {#each connectors as c (c.id)}
         <button
           class="ctx-item sub"
@@ -1317,7 +1317,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="ctx-backdrop" onclick={() => (sendMenu = null)} oncontextmenu={(e) => { e.preventDefault(); sendMenu = null; }}></div>
   <div class="ctx-menu" style:left="{sendMenu.x}px" style:top="{sendMenu.y}px">
-    <div class="ctx-label"><Icon name="plug" size={12} /> Send to webhook</div>
+    <div class="ctx-label"><Icon name="webhook" size={12} /> Send to webhook</div>
     {#each connectors as c (c.id)}
       <button
         class="ctx-item sub"

@@ -186,6 +186,12 @@
   // context — never saved to any profile, just for this copy/send. ──
   let aiBusy = $state(false);
   let llmReady = $derived(!!(llm && llm.api_key));
+  // Web research auto-checked: without it the model invents company facts,
+  // which is exactly the weird-output failure mode. Untick per fill if wanted.
+  let aiWeb = $state(true);
+  $effect(() => {
+    aiWeb = llm?.web_search !== false;
+  });
   function rawItemContext() {
     const parts = [];
     if (item.subject) parts.push(`Subject: ${item.subject}`);
@@ -205,7 +211,7 @@
     aiBusy = true;
     try {
       const tone = profiles.find((p) => p.id === profileId)?.tone || activeProfile?.tone || "";
-      const body = await llmEnrich(JSON.stringify(values), "", null, tone, false, false, rawItemContext());
+      const body = await llmEnrich(JSON.stringify(values), "", aiWeb, tone, false, false, rawItemContext());
       const obj = JSON.parse(body);
       let n = 0;
       for (const [k, v] of Object.entries(obj)) {
@@ -332,7 +338,7 @@
                       e.stopPropagation();
                       hoverStep = null;
                       stepSend = { idx: i, x: e.clientX, y: e.clientY };
-                    }}><Icon name="plug" size={14} /></button
+                    }}><Icon name="webhook" size={14} /></button
                   >
                 {/if}
               </span>
@@ -387,19 +393,25 @@
     <div class="modal-actions">
       <button class="ghost" onclick={onClose}>Close</button>
       {#if llmReady && itemVars(item).length}
-        <button
-          class="ghost aifill"
-          disabled={aiBusy}
-          title="One AI call fills ONLY the empty variables using this template as context — nothing is saved to the profile"
-          onclick={aiFill}
-        >
-          <Icon name="sparkle" size={13} /> {aiBusy ? "Filling…" : "AI fill"}
-        </button>
+        <div class="aifill-wrap">
+          <button
+            class="ghost aifill"
+            disabled={aiBusy}
+            title="One AI call fills ONLY the empty variables using this template as context — nothing is saved to the profile"
+            onclick={aiFill}
+          >
+            <Icon name="sparkle" size={13} /> {aiBusy ? "Filling…" : "AI fill"}
+          </button>
+          <label class="aiweb" title="The model researches the company live (OpenRouter :online) — untick for a purely offline fill">
+            <input type="checkbox" bind:checked={aiWeb} disabled={aiBusy} />
+            <span>Web research</span>
+          </label>
+        </div>
       {/if}
       {#if connectors.length}
         <div class="send-wrap">
           <button class="ghost" disabled={sending} onclick={() => (sendOpen = !sendOpen)}>
-            <Icon name="plug" size={13} /> {sending ? "Sending…" : "Send webhook ▾"}
+            <Icon name="webhook" size={13} /> {sending ? "Sending…" : "Send webhook ▾"}
           </button>
           {#if sendOpen}
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -438,7 +450,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="ss-backdrop" onclick={() => (stepSend = null)}></div>
   <div class="ss-menu" style:left="{Math.min(stepSend.x, window.innerWidth - 240)}px" style:top="{stepSend.y}px">
-    <div class="ss-label"><Icon name="plug" size={12} /> Send step {stepSend.idx + 1} to</div>
+    <div class="ss-label"><Icon name="webhook" size={12} /> Send step {stepSend.idx + 1} to</div>
     {#each connectors as c (c.id)}
       <button class="smi" onclick={() => sendStepTo(stepSend.idx, c)}>{c.name || c.url}</button>
     {/each}
@@ -649,21 +661,45 @@
   .ov-step :global(.ic) {
     color: var(--faint);
   }
+  /* Always visible — hover only brightens them. */
   .ov-acts {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
-    opacity: 0;
+    gap: 4px;
+    opacity: 0.85;
     transition: opacity 0.12s var(--ease);
   }
   .ov-step:hover .ov-acts {
     opacity: 1;
+  }
+  .ov-acts :global(.icon-btn) {
+    border: 1px solid var(--border);
+    background: var(--elevated);
+  }
+  .ov-acts :global(.icon-btn:hover) {
+    border-color: var(--border-strong);
+    color: var(--accent-strong);
   }
   .icon-btn.xs {
     padding: 5px;
   }
   .aifill {
     color: var(--accent-strong);
+  }
+  .aifill-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .aiweb {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
   }
   .ss-backdrop {
     position: fixed;

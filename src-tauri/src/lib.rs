@@ -364,8 +364,14 @@ fn set_schedules(app: AppHandle, schedules: Vec<settings::Schedule>) -> AppSetti
 // ─── Autostart (launch on login) ─────────────────────────────────────────────
 
 /// Apply the persisted autostart preference to the OS (registry Run key on
-/// Windows). Best-effort: dev builds point at the dev exe, which is fine.
+/// Windows). Release builds only: a dev exe must never write the entry — it
+/// would point login-launch at a debug binary that needs the Vite dev server,
+/// and clobber the path a release install registered. Each release launch
+/// re-registers, so the entry heals itself after an update or reinstall.
 fn apply_autostart(app: &AppHandle, enabled: bool) {
+    if cfg!(debug_assertions) {
+        return;
+    }
     use tauri_plugin_autostart::ManagerExt;
     let mgr = app.autolaunch();
     let _ = if enabled { mgr.enable() } else { mgr.disable() };
@@ -733,7 +739,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec!["--autostart"]),
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(LibraryState::load(data_dir.join("library.json")))
@@ -760,6 +766,13 @@ pub fn run() {
             // Launch-on-login: sync the OS Run entry to the persisted setting.
             let autostart = handle.state::<SettingsState>().snapshot().autostart;
             apply_autostart(handle, autostart);
+            // When the OS launched us at login, stay in the tray instead of
+            // popping a window over whatever the user is doing.
+            if std::env::args().any(|a| a == "--autostart") {
+                if let Some(win) = handle.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            }
 
             // System tray: Castline keeps running (scheduler, endpoint, agent)
             // when the window is closed; reopen or quit from here.

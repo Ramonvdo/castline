@@ -351,7 +351,9 @@
     aiPanel = { profile: p };
     aiContext = "";
     aiFile = null;
-    aiWeb = !!(llm && llm.web_search);
+    // Auto-checked: without web research the model invents company facts.
+    // Only an explicit Settings opt-out starts it unticked.
+    aiWeb = llm?.web_search !== false;
     // Off by default — with nothing ticked the generation stays simple
     // (values + variable descriptions only).
     aiTone = false;
