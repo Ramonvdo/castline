@@ -1979,16 +1979,44 @@
     padding: 11px 14px;
   }
 
-  /* ── Super compact: identical size and layout to compact, just tidier —
-     the bottom-left Copy/View buttons only fade in while the card is
-     hovered (their space stays reserved, so nothing shifts). ── */
+  /* ── Super compact: compact layout minus the footer row, so cards sit
+     shorter. Hovering extends the card downward with an animated flap that
+     carries Copy/View — it overlays the row below (no grid reflow). ── */
+  .card.super {
+    transition:
+      border-color 0.12s var(--ease),
+      transform 0.08s var(--ease),
+      border-radius 0.14s var(--ease);
+  }
+  .card.super:hover {
+    z-index: 6;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-color: transparent;
+  }
   .card.super footer {
+    position: absolute;
+    top: 100%;
+    left: -1px;
+    right: -1px;
+    z-index: 6;
+    margin: 0;
+    padding: 3px 13px 11px;
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--fcolor) 85%, transparent);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    box-shadow: var(--shadow-card);
     opacity: 0;
+    transform: translateY(-8px);
     pointer-events: none;
-    transition: opacity 0.12s var(--ease);
+    transition:
+      opacity 0.16s var(--ease),
+      transform 0.18s var(--ease);
   }
   .card.super:hover footer {
     opacity: 1;
+    transform: translateY(0);
     pointer-events: auto;
   }
   /* "Everything's filled by this profile": a soft glow fading up from the
@@ -1999,7 +2027,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    height: 48px;
+    height: 26px;
     border-radius: 0 0 var(--radius) var(--radius);
     background: linear-gradient(
       to top,
