@@ -803,7 +803,7 @@
         No items{search || selectedTags.length ? " match" : " yet"}.
       </p>
     {:else}
-      <div class="grid" class:super={superC}>
+      <div class="grid">
         {#each visible as { item, folderId, folderName, folderColor } (item.id)}
           {@const vars = itemVars(item)}
           {@const pos = selIndex(item.id)}
@@ -1979,63 +1979,34 @@
     padding: 11px 14px;
   }
 
-  /* ── Super compact: name-only rows in a denser grid. Copy/View are hidden
-     until the card is hovered, then appear icon-only at the right edge. ── */
-  .grid.super {
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 9px;
-  }
-  .card.super {
-    gap: 0;
-    padding: 10px 12px;
-  }
-  .card.super .name {
-    -webkit-line-clamp: 1;
-    font-size: 13.5px;
-  }
-  .card.super .hover-actions {
-    display: none; /* right-click menu covers edit/pin/delete here */
-  }
+  /* ── Super compact: identical size and layout to compact, just tidier —
+     the bottom-left Copy/View buttons only fade in while the card is
+     hovered (their space stays reserved, so nothing shifts). ── */
   .card.super footer {
-    position: absolute;
-    top: 50%;
-    right: 6px;
-    transform: translateY(-50%);
-    z-index: 2;
-    margin: 0;
-    padding: 0 0 0 10px;
-    gap: 4px;
     opacity: 0;
     pointer-events: none;
-    background: linear-gradient(90deg, transparent, var(--surface) 22%);
     transition: opacity 0.12s var(--ease);
   }
   .card.super:hover footer {
     opacity: 1;
     pointer-events: auto;
   }
-  .card.super footer .act {
-    padding: 5px 7px;
-    background: var(--elevated);
-  }
-  .card.super footer .act.filled {
-    background: color-mix(in srgb, var(--accent) 14%, var(--elevated));
-  }
-  .card.super .act-t {
-    display: none;
-  }
-  /* "Everything's filled by this profile": a small light along the bottom
-     edge — on hover the lit Copy button takes over, so the light steps back. */
+  /* "Everything's filled by this profile": a soft glow fading up from the
+     card's bottom — on hover the lit Copy button takes over instead. */
   .card.super.ready::after {
     content: "";
     position: absolute;
-    left: 14%;
-    right: 14%;
-    bottom: -1px;
-    height: 2px;
-    border-radius: 2px;
-    background: var(--accent);
-    box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 75%, transparent);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 48px;
+    border-radius: 0 0 var(--radius) var(--radius);
+    background: linear-gradient(
+      to top,
+      color-mix(in srgb, var(--accent) 20%, transparent),
+      transparent
+    );
+    pointer-events: none;
     transition: opacity 0.12s var(--ease);
   }
   .card.super.ready:hover::after {
