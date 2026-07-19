@@ -28,8 +28,8 @@ pub struct Profile {
     /// global tone in Settings when non-empty).
     #[serde(default)]
     pub tone: String,
-    /// Variables locked to the empty state: they must be filled on the spot
-    /// and are never written by any enrich path (AI, webhook, inbound API).
+    /// LEGACY (pre-global locks): per-profile locked variables. Migrated into
+    /// `ProfilesData.locked` on load; kept only so old files deserialize.
     #[serde(default)]
     pub locked: Vec<String>,
 }
@@ -63,6 +63,11 @@ pub struct ProfilesData {
     /// agent's CLAUDE.md (what each `{{variable}}` should contain, with examples).
     #[serde(default)]
     pub descriptions: BTreeMap<String, String>,
+    /// GLOBAL locked-empty variables: locked once, locked for every profile.
+    /// They must be filled on the spot and are never written by any enrich
+    /// path (AI, webhook, inbound API) or profile save.
+    #[serde(default)]
+    pub locked: Vec<String>,
 }
 
 /// Tauri-managed live profiles + the JSON path it persists to.
@@ -73,7 +78,7 @@ pub struct ProfilesState {
 
 impl ProfilesState {
     pub fn load(path: PathBuf) -> Self {
-        let data = match std::fs::read_to_string(&path) {
+        let mut data = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
             Err(_) => {
                 let d = ProfilesData::default();
@@ -86,6 +91,13 @@ impl ProfilesState {
                 d
             }
         };
+        // Pre-global-locks files carry per-profile lock lists — fold them into
+        // the global list once and persist immediately.
+        if migrate_locked(&mut data) {
+            if let Ok(json) = serde_json::to_string_pretty(&data) {
+                let _ = std::fs::write(&path, json);
+            }
+        }
         ProfilesState { data: Mutex::new(data), path }
     }
 
@@ -110,7 +122,30 @@ impl ProfilesState {
 
 // ─── Pure mutation helpers (unit-tested) ─────────────────────────────────────
 
-/// Insert (blank id) or replace (matching id) a profile.
+/// One-time migration: union per-profile `locked` lists (pre-global-locks
+/// files) into the global `data.locked` and clear the legacy fields.
+/// Returns true when anything moved.
+pub fn migrate_locked(data: &mut ProfilesData) -> bool {
+    let mut changed = false;
+    let mut collected: Vec<String> = Vec::new();
+    for p in &mut data.profiles {
+        collected.append(&mut p.locked);
+        if !collected.is_empty() {
+            changed = true;
+        }
+    }
+    for l in collected {
+        if !data.locked.contains(&l) {
+            data.locked.push(l);
+        }
+    }
+    changed
+}
+
+/// Insert (blank id) or replace (matching id) a profile. Globally-locked
+/// variables are stripped from the values on EVERY write path (frontend
+/// saves, inbound create/update, connector imports) — locked means empty
+/// in every profile, enforced here so no caller can forget.
 pub fn upsert_profile(data: &mut ProfilesData, mut profile: Profile) {
     if profile.id.trim().is_empty() {
         profile.id = gen_id();
@@ -118,6 +153,8 @@ pub fn upsert_profile(data: &mut ProfilesData, mut profile: Profile) {
     if profile.source.trim().is_empty() {
         profile.source = "manual".into();
     }
+    profile.values.retain(|k, _| !data.locked.iter().any(|l| l == k));
+    profile.locked.clear(); // legacy per-profile field, superseded by data.locked
     if let Some(existing) = data.profiles.iter_mut().find(|p| p.id == profile.id) {
         *existing = profile;
     } else {
@@ -138,6 +175,7 @@ pub fn enrich_existing(data: &mut ProfilesData, incoming: &Profile) -> Option<St
     let want_email =
         incoming.values.get("email").map(|e| e.trim().to_ascii_lowercase()).filter(|e| !e.is_empty());
 
+    let locked = data.locked.clone();
     let target = data.profiles.iter_mut().find(|p| {
         (!want_name.is_empty() && p.name.trim().to_ascii_lowercase() == want_name)
             || match (&want_email, p.values.get("email")) {
@@ -147,9 +185,9 @@ pub fn enrich_existing(data: &mut ProfilesData, incoming: &Profile) -> Option<St
     })?;
 
     for (k, v) in &incoming.values {
-        // Locked-empty variables must always be filled on the spot — no enrich
-        // path may write them.
-        if target.locked.iter().any(|l| l == k) {
+        // Globally-locked variables must always be filled on the spot — no
+        // enrich path may write them, in any profile.
+        if locked.iter().any(|l| l == k) {
             continue;
         }
         target.values.insert(k.clone(), v.clone());
@@ -166,6 +204,23 @@ pub fn set_layout(data: &mut ProfilesData, layout: Vec<LayoutEntry>) {
 pub fn set_descriptions(data: &mut ProfilesData, descriptions: BTreeMap<String, String>) {
     data.descriptions =
         descriptions.into_iter().filter(|(_, v)| !v.trim().is_empty()).collect();
+}
+
+/// Replace the GLOBAL locked-variable list. Locking a variable clears its
+/// current value in every profile (locked = empty everywhere, filled on the
+/// spot); unlocking simply allows values again.
+pub fn set_locked(data: &mut ProfilesData, locked: Vec<String>) {
+    let mut clean: Vec<String> = Vec::new();
+    for l in locked {
+        let t = l.trim().to_string();
+        if !t.is_empty() && !clean.contains(&t) {
+            clean.push(t);
+        }
+    }
+    for p in &mut data.profiles {
+        p.values.retain(|k, _| !clean.iter().any(|l| l == k));
+    }
+    data.locked = clean;
 }
 
 /// Merge imported profiles by appending each with a fresh id.
@@ -269,11 +324,10 @@ mod tests {
     }
 
     #[test]
-    fn enrich_never_writes_locked_variables() {
+    fn enrich_never_writes_globally_locked_variables() {
         let mut d = ProfilesData::default();
-        let mut p = profile("Sam", &[("company", "Acme")]);
-        p.locked = vec!["icebreaker".into(), "company".into()];
-        d.profiles.push(p);
+        d.locked = vec!["icebreaker".into(), "company".into()];
+        d.profiles.push(profile("Sam", &[("company", "Acme")]));
 
         let incoming =
             profile("Sam", &[("icebreaker", "generated text"), ("company", "Globex"), ("title", "CTO")]);
@@ -287,7 +341,49 @@ mod tests {
         // Round-trips through JSON.
         let json = serde_json::to_string(&d).unwrap();
         let back: ProfilesData = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.profiles[0].locked.len(), 2);
+        assert_eq!(back.locked.len(), 2);
+    }
+
+    #[test]
+    fn locking_is_global_clears_values_and_blocks_saves() {
+        let mut d = ProfilesData::default();
+        d.profiles.push(profile("Sam", &[("icebreaker", "hey"), ("company", "Acme")]));
+        d.profiles.push(profile("Kim", &[("icebreaker", "hi there")]));
+
+        // Locking clears the variable in EVERY profile, not just one.
+        set_locked(&mut d, vec!["icebreaker".into(), " icebreaker ".into(), "".into()]);
+        assert_eq!(d.locked, vec!["icebreaker".to_string()]); // trimmed + deduped
+        assert!(d.profiles[0].values.get("icebreaker").is_none());
+        assert!(d.profiles[1].values.get("icebreaker").is_none());
+        assert_eq!(d.profiles[0].values.get("company").unwrap(), "Acme");
+
+        // Any later save (frontend, inbound create, connector import) is
+        // stripped of locked values too.
+        upsert_profile(&mut d, profile("New Guy", &[("icebreaker", "smuggled"), ("title", "CTO")]));
+        let np = d.profiles.iter().find(|p| p.name == "New Guy").unwrap();
+        assert!(np.values.get("icebreaker").is_none());
+        assert_eq!(np.values.get("title").unwrap(), "CTO");
+
+        // Unlocking allows values again.
+        set_locked(&mut d, Vec::new());
+        upsert_profile(&mut d, profile("Later", &[("icebreaker", "fine now")]));
+        let lp = d.profiles.iter().find(|p| p.name == "Later").unwrap();
+        assert_eq!(lp.values.get("icebreaker").unwrap(), "fine now");
+    }
+
+    #[test]
+    fn per_profile_locks_migrate_into_the_global_list() {
+        // A profiles.json from the per-profile-locks era.
+        let json = r#"{ "profiles": [
+            { "id": "a", "name": "Sam", "values": {}, "locked": ["icebreaker"] },
+            { "id": "b", "name": "Kim", "values": {}, "locked": ["icebreaker", "phone"] }
+        ] }"#;
+        let mut d: ProfilesData = serde_json::from_str(json).unwrap();
+        assert!(migrate_locked(&mut d));
+        assert_eq!(d.locked, vec!["icebreaker".to_string(), "phone".to_string()]);
+        assert!(d.profiles.iter().all(|p| p.locked.is_empty()));
+        // Idempotent: a second pass changes nothing.
+        assert!(!migrate_locked(&mut d));
     }
 
     #[test]

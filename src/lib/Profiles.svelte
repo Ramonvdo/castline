@@ -5,6 +5,7 @@
     profilesSave,
     profilesDelete,
     profilesSetLayout,
+    profilesSetLocked,
     profileFromJson,
     connectorSend,
     llmEnrich,
@@ -22,6 +23,7 @@
   let {
     profiles = [],
     layout = [],
+    locked = [], // GLOBAL locked-empty variables (apply to every profile)
     folders = [],
     connectors = [],
     llm = { api_key: "", web_search: false },
@@ -37,15 +39,20 @@
   let pTone = $state(""); // per-profile tone-of-voice override
   let slots = $state([]);
   let valueMap = $state({});
-  // Locked-empty variables: always empty, filled on the spot, never enriched.
-  let pLocked = $state([]);
-  function toggleLock(varName) {
-    if (pLocked.includes(varName)) {
-      pLocked = pLocked.filter((n) => n !== varName);
-    } else {
-      pLocked = [...pLocked, varName];
-      valueMap = { ...valueMap, [varName]: "" };
-    }
+  // Locked-empty variables are GLOBAL: locking here locks the variable in
+  // every profile (values cleared everywhere, no enrich may write it).
+  async function toggleLock(varName) {
+    const next = locked.includes(varName)
+      ? locked.filter((n) => n !== varName)
+      : [...locked, varName];
+    if (next.length > locked.length) valueMap = { ...valueMap, [varName]: "" };
+    const data = await profilesSetLocked(next);
+    onData(data);
+    flash(
+      next.includes(varName)
+        ? `“${varName}” locked for every profile — filled on the spot only`
+        : `“${varName}” unlocked`,
+    );
   }
 
   // ── Long-value hover: a floating, editable preview beside the cursor ──
@@ -109,7 +116,6 @@
     editingId = "";
     name = "";
     pTone = "";
-    pLocked = [];
     slots = buildSlots({});
     valueMap = seedValues(slots, {});
   }
@@ -117,7 +123,6 @@
     editingId = p.id;
     name = p.name;
     pTone = p.tone || "";
-    pLocked = [...(p.locked || [])];
     slots = buildSlots(p.values);
     valueMap = seedValues(slots, p.values);
   }
@@ -143,7 +148,7 @@
         values: collectValues(),
         source: "manual",
         tone: pTone.trim(),
-        locked: pLocked,
+        locked: [],
       })
         .then(onData)
         .catch(() => {});
@@ -215,7 +220,7 @@
     const values = {};
     for (const s of slots) {
       if (s.type !== "var") continue;
-      if (pLocked.includes(s.name)) continue; // locked = always empty
+      if (locked.includes(s.name)) continue; // globally locked = always empty
       const val = valueMap[s.name];
       if (val !== undefined && val !== "") values[s.name] = val;
     }
@@ -234,7 +239,7 @@
       values: collectValues(),
       source: "manual",
       tone: pTone.trim(),
-      locked: pLocked,
+      locked: [],
     });
     onData(data);
     editingId = null;
@@ -342,9 +347,9 @@
   }
 
   // Merge an enrichment result (object of name → value) into a profile.
-  // Locked-empty variables are never written by any enrich path.
+  // Globally-locked variables are never written by any enrich path (the
+  // backend strips them too — this keeps the counts honest).
   async function mergeEnriched(p, obj, label, markAi = false) {
-    const locked = p.locked || [];
     const merged = { ...p.values };
     const written = [];
     for (const [k, v] of Object.entries(obj)) {
@@ -360,7 +365,7 @@
       values: merged,
       source: p.source || "manual",
       tone: p.tone || "",
-      locked,
+      locked: [],
     });
     onData(data);
     flash(`Enriched “${p.name}” (+${n} fields${label ? ` · ${label}` : ""})`);
@@ -705,13 +710,13 @@
               <span class="vname" title={s.name}>{s.name}</span>
               <input
                 class="field vval"
-                class:lockedv={pLocked.includes(s.name)}
+                class:lockedv={locked.includes(s.name)}
                 class:aifresh={editingId &&
                   (aiFresh[editingId] || []).includes(s.name)}
                 bind:value={valueMap[s.name]}
-                disabled={pLocked.includes(s.name)}
-                placeholder={pLocked.includes(s.name)
-                  ? "locked — fill on the spot, never enriched"
+                disabled={locked.includes(s.name)}
+                placeholder={locked.includes(s.name)
+                  ? "locked everywhere — fill on the spot, never enriched"
                   : "value"}
                 oninput={() => clearAiMark(s.name)}
                 onmouseenter={(e) => varEnter(e, s.name)}
@@ -723,10 +728,10 @@
               />
               <button
                 class="icon-btn lockbtn"
-                class:on={pLocked.includes(s.name)}
-                title={pLocked.includes(s.name)
-                  ? "Locked empty — this variable must be filled on the spot and no enrich can write it. Click to unlock."
-                  : "Lock empty — always fill this on the spot; AI/webhook enrich will never touch it"}
+                class:on={locked.includes(s.name)}
+                title={locked.includes(s.name)
+                  ? "Locked empty in EVERY profile — must be filled on the spot, no enrich can write it. Click to unlock globally."
+                  : "Lock empty for every profile — always filled on the spot; AI/webhook enrich will never touch it anywhere"}
                 onclick={() => toggleLock(s.name)}
                 ><Icon name="lock" size={14} /></button
               >

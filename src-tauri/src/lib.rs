@@ -152,6 +152,13 @@ fn profiles_set_descriptions(
     with_profiles(&app, |d| profiles::set_descriptions(d, descriptions))
 }
 
+/// Replace the GLOBAL locked-variable list (locked = empty in every profile,
+/// filled on the spot, never written by any enrich path).
+#[tauri::command]
+fn profiles_set_locked(app: AppHandle, locked: Vec<String>) -> ProfilesData {
+    with_profiles(&app, |d| profiles::set_locked(d, locked))
+}
+
 /// Paste-importer: build a profile from a raw JSON string (every key passes
 /// through as a variable of the same name).
 #[tauri::command]
@@ -855,6 +862,7 @@ pub fn run() {
             profiles_delete,
             profiles_set_layout,
             profiles_set_descriptions,
+            profiles_set_locked,
             profile_from_json,
             connector_send,
             get_send_history,

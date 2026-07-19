@@ -29,6 +29,8 @@ export const profilesDelete = (id) => invoke("profiles_delete", { id });
 export const profilesSetLayout = (layout) => invoke("profiles_set_layout", { layout });
 export const profilesSetDescriptions = (descriptions) =>
   invoke("profiles_set_descriptions", { descriptions });
+export const profilesSetLocked = (locked) =>
+  invoke("profiles_set_locked", { locked });
 export const profileFromJson = (jsonText) => invoke("profile_from_json", { jsonText });
 
 // ── Clipboard ──

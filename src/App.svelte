@@ -280,6 +280,7 @@
       <Profiles
         profiles={profiles.profiles}
         layout={profiles.layout || []}
+        locked={profiles.locked || []}
         folders={library.folders}
         connectors={settings.connectors || []}
         llm={settings.llm || {}}

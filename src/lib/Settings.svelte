@@ -34,7 +34,7 @@
   // ── Variables (descriptions = AI context) ──
   let descs = $state({}); // name -> description (editable copy)
   let storedDescs = $state({}); // as loaded from profiles.json
-  let lockedIn = $state({}); // name -> [profile names] that lock it empty
+  let lockedVars = $state([]); // GLOBAL locked-empty variables
 
   // Long-description hover: a floating, editable preview beside the cursor
   // (same pattern as the profile editor's long-value panel).
@@ -144,13 +144,10 @@
     const d = { ...descs };
     for (const [k, v] of Object.entries(storedDescs)) if (!d[k]) d[k] = v;
     descs = d;
-    // Which variables are locked-empty, and in which profiles — shown as a
-    // padlock so it's clear the value stays empty while the description
-    // still guides AI enrichment.
-    const li = {};
-    for (const prof of p.profiles || [])
-      for (const nm of prof.locked || []) (li[nm] ||= []).push(prof.name);
-    lockedIn = li;
+    // Globally locked-empty variables — shown as a padlock so it's clear the
+    // value stays empty everywhere while the description still guides AI
+    // enrichment of the other variables.
+    lockedVars = p.locked || [];
   });
 
   let descDirty = false;
@@ -381,10 +378,10 @@
           <div class="varrow">
             <span class="vcell">
               <code class="vname">{n}</code>
-              {#if lockedIn[n]}
+              {#if lockedVars.includes(n)}
                 <span
                   class="vlock"
-                  title={`Locked empty in ${lockedIn[n].join(", ")} — always filled on the spot, never enriched there. The description below still guides the AI everywhere else.`}
+                  title="Locked empty in every profile — always filled on the spot, no enrich can write it. The description still guides the AI for the other variables."
                   ><Icon name="lock" size={12} /></span
                 >
               {/if}
