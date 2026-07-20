@@ -38,28 +38,39 @@ pub enum LoadedStore<T> {
     Corrupt { backup: PathBuf },
 }
 
-/// Read + parse `path`, quarantining an unparseable file instead of losing it.
+/// Read + parse `path`, quarantining an unreadable/unparseable file instead of
+/// losing it. Only a genuinely absent file reports `Missing` (the one case where
+/// the caller may write seeded defaults) — every other problem is quarantined.
 pub fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> LoadedStore<T> {
-    let text = match fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(_) => return LoadedStore::Missing,
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return LoadedStore::Missing,
+        // Exists but unreadable (a lock held by AV/backup, a permission error).
+        // Never let the caller overwrite it with defaults — move it aside.
+        Err(_) => return quarantine(path),
     };
-    match serde_json::from_str(&text) {
+    // `from_slice` treats invalid UTF-8 as a parse error, so a torn write that
+    // splits a multi-byte character is quarantined, not silently reset.
+    match serde_json::from_slice(&bytes) {
         Ok(data) => LoadedStore::Parsed(data),
-        Err(_) => {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let mut backup_os = path.as_os_str().to_owned();
-            backup_os.push(format!(".corrupt-{ts}"));
-            let backup = PathBuf::from(backup_os);
-            if fs::rename(path, &backup).is_err() {
-                let _ = fs::copy(path, &backup);
-            }
-            LoadedStore::Corrupt { backup }
-        }
+        Err(_) => quarantine(path),
     }
+}
+
+/// Move a file aside to `<name>.corrupt-<ts>` so a later defaults-save can't
+/// destroy it, and report where it went.
+fn quarantine<T>(path: &Path) -> LoadedStore<T> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut backup_os = path.as_os_str().to_owned();
+    backup_os.push(format!(".corrupt-{ts}"));
+    let backup = PathBuf::from(backup_os);
+    if fs::rename(path, &backup).is_err() {
+        let _ = fs::copy(path, &backup);
+    }
+    LoadedStore::Corrupt { backup }
 }
 
 /// Human-readable problems collected while the stores loaded (before the
@@ -117,6 +128,22 @@ mod tests {
         match load_json::<Doc>(&path) {
             LoadedStore::Parsed(d) => assert_eq!(d.a, 7),
             _ => panic!("expected Parsed"),
+        }
+    }
+
+    #[test]
+    fn load_json_invalid_utf8_is_quarantined_not_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        // Bytes that aren't valid UTF-8 — what a torn write mid-multibyte-char
+        // leaves behind. read_to_string would have mapped this to Missing.
+        fs::write(&path, [0xff, 0xfe, b'{', 0x80]).unwrap();
+        match load_json::<Doc>(&path) {
+            LoadedStore::Corrupt { backup } => {
+                assert!(!path.exists(), "original must be moved aside, not read-then-overwritten");
+                assert!(backup.exists());
+            }
+            _ => panic!("invalid UTF-8 must quarantine, not report Missing"),
         }
     }
 

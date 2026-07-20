@@ -98,15 +98,33 @@
     toastTimer = setTimeout(() => (toast = ""), ms);
   }
 
+  // A store failed to load (e.g. a corrupt file was quarantined). This is a
+  // data-loss notice, so it gets its own dismissable banner — not the ephemeral
+  // toast, which any "Copied" would clobber within its window.
+  let storeWarn = $state("");
+  async function drainStoreWarnings() {
+    const warns = await storageWarnings();
+    if (warns.length) storeWarn = warns.join(" · ");
+  }
+
   onMount(async () => {
     settings = await getSettings();
     library = await getLibrary();
     profiles = await getProfiles();
 
-    // Surface anything that went wrong while the stores loaded (e.g. a
-    // corrupt file that was quarantined) — long timeout, it matters.
-    const warns = await storageWarnings();
-    if (warns.length) flash(warns.join(" · "), 10000);
+    // Show store-load problems only once the window is actually on screen — an
+    // autostart launch starts hidden in the tray, and a warning drained into a
+    // hidden window would be lost. Defer to the first time it's shown/focused.
+    if (await appWindow.isVisible()) {
+      drainStoreWarnings();
+    } else {
+      const unShown = await appWindow.onFocusChanged(({ payload: focused }) => {
+        if (focused) {
+          drainStoreWarnings();
+          unShown();
+        }
+      });
+    }
 
     const un = await onProfilesChanged(async () => {
       profiles = await getProfiles();
@@ -323,6 +341,16 @@
 </div>
 
 {#if toast}<div class="toast">{toast}</div>{/if}
+
+{#if storeWarn}
+  <div class="store-warn" role="alert">
+    <Icon name="info" size={15} />
+    <span>{storeWarn}</span>
+    <button type="button" class="sw-dismiss" onclick={() => (storeWarn = "")} aria-label="Dismiss">
+      <Icon name="close" size={14} />
+    </button>
+  </div>
+{/if}
 
 {#if quickOpen}
   <QuickOpen
@@ -565,5 +593,44 @@
     font-size: 13px;
     z-index: 80;
     box-shadow: var(--shadow-modal);
+  }
+  /* Data-loss notice: sticky, dismissable, distinct from the toast. */
+  .store-warn {
+    position: fixed;
+    top: 44px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: min(680px, calc(100vw - 32px));
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    background: var(--elevated);
+    border: 1px solid #b4791f;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 12px 10px 14px;
+    font-size: 13px;
+    line-height: 1.35;
+    z-index: 90;
+    box-shadow: var(--shadow-modal);
+  }
+  .store-warn > span {
+    flex: 1;
+  }
+  .sw-dismiss {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .sw-dismiss:hover {
+    color: var(--text);
+    background: var(--accent-soft);
   }
 </style>

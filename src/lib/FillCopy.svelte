@@ -62,20 +62,26 @@
   }
 
   // Seed keys; prefill from the active profile (or a picked one) where present.
-  // Reseed only when the fill target actually changes — a background
-  // profiles-changed refresh mints a NEW activeProfile object with the same id
-  // and must not wipe what the user (or AI fill) already entered.
-  let seededFor = null;
+  // Reseed only when the fill target changes or the user picks a *different*
+  // profile. A background profiles-changed event that replaces the active
+  // profile object with the same id — or removes it out from under an open
+  // modal — must not wipe what the user (or AI fill) already entered.
+  let seededItem = null;
+  let seededProfile = null;
   $effect(() => {
-    const key = (item ? item.id : "") + "::" + (activeProfile ? activeProfile.id : "");
-    if (key === seededFor) return;
-    seededFor = key;
+    const itemId = item ? item.id : "";
+    const pid = activeProfile ? activeProfile.id : "";
+    const itemChanged = itemId !== seededItem;
+    const profileSwitched = pid !== "" && pid !== seededProfile;
+    if (!itemChanged && !profileSwitched) return;
+    seededItem = itemId;
+    seededProfile = pid;
     const src = activeProfile ? activeProfile.values : {};
     const seed = {};
     for (const v of itemVars(item)) seed[v] = src[v] ?? "";
     values = seed;
     stepIdx = 0;
-    profileId = activeProfile ? activeProfile.id : "";
+    profileId = pid;
     stage = item && item.kind === "sop" ? "overview" : "single";
     hoverStep = null;
     aiFilled = [];
