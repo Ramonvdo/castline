@@ -2,6 +2,7 @@
   import { itemVars, itemPlainText, applyVars } from "./vars.js";
   import { clipCopy, libRecordUse } from "./api.js";
   import Icon from "./Icon.svelte";
+  import FolderIcon from "./FolderIcon.svelte";
 
   // props
   let { library, activeProfile = null, flash, onFill, onClose, onUsed = () => {} } = $props();
@@ -19,7 +20,7 @@
     const out = [];
     for (const f of library.folders || []) {
       for (const i of f.items || []) {
-        out.push({ item: i, folderId: f.id, folderName: f.name, folderIcon: f.icon });
+        out.push({ item: i, folderId: f.id, folderName: f.name, folderIcon: f.icon, folderColor: f.color });
       }
     }
     return out;
@@ -120,7 +121,7 @@
             onclick={() => choose(e)}
           >
             <span class="ricon">
-              {#if e.folderIcon}{e.folderIcon}{:else}<Icon name={e.item.kind === "sop" ? "sop" : "template"} size={15} />{/if}
+              {#if e.folderIcon}<FolderIcon name={e.folderIcon} color={e.folderColor || "var(--muted)"} size={15} />{:else}<Icon name={e.item.kind === "sop" ? "sop" : "template"} size={15} />{/if}
             </span>
             <span class="rname">{e.item.name}</span>
             <span class="rfolder">{e.folderName}</span>

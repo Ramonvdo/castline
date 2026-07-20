@@ -71,7 +71,8 @@ pub struct LibFolder {
     pub name: String,
     #[serde(default)]
     pub color: String,
-    /// An emoji shown next to the folder for fast visual scanning.
+    /// Icon name from the UI's FOLDER_ICONS set (e.g. "rocket"), shown next to
+    /// the folder for fast visual scanning. Empty = default folder glyph.
     #[serde(default)]
     pub icon: String,
     #[serde(default)]
