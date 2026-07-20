@@ -11,6 +11,8 @@ Cast any block of text once, fill it in a second, paste it anywhere.
 [![License: MIT](https://img.shields.io/badge/license-MIT-1f6feb)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Ramonvdo/castline?display_name=tag&color=1f6feb)](https://github.com/Ramonvdo/castline/releases/latest)
 
+![Castline](.github/assets/castline-app.png)
+
 </div>
 
 ---
