@@ -436,8 +436,10 @@ fn set_connectors(app: AppHandle, connectors: Vec<Connector>) -> AppSettings {
 
 /// Enable/disable the loopback HTTP endpoint (Make/n8n HTTP module → profile).
 /// Enabling mints a bearer token if there isn't one, then (re)starts the server.
+/// Errs when the port can't be bound; `enabled` stays persisted so the next
+/// launch (or toggle) retries.
 #[tauri::command]
-fn set_http_endpoint(app: AppHandle, enabled: bool, port: u16) -> AppSettings {
+fn set_http_endpoint(app: AppHandle, enabled: bool, port: u16) -> Result<AppSettings, String> {
     let state = app.state::<SettingsState>();
     {
         let mut s = state.data.lock().unwrap();
@@ -451,8 +453,8 @@ fn set_http_endpoint(app: AppHandle, enabled: bool, port: u16) -> AppSettings {
     }
     state.save();
     let snap = state.snapshot();
-    app.state::<receiver::HttpController>().apply(&app, snap.http.enabled, snap.http.port);
-    snap
+    app.state::<receiver::HttpController>().apply(&app, snap.http.enabled, snap.http.port)?;
+    Ok(snap)
 }
 
 /// Current endpoint status for the Connectors UI (and the agent's write path).
@@ -494,7 +496,10 @@ fn ensure_endpoint_for_agent(app: &AppHandle) {
     // (avoids a bind race with the one started at setup / by the toggle).
     let controller = app.state::<receiver::HttpController>();
     if controller.active_port() != Some(port) {
-        controller.apply(app, enabled, port);
+        if let Err(e) = controller.apply(app, enabled, port) {
+            // Agent still works read-only; CLAUDE.md will say the endpoint is off.
+            eprintln!("[castline] agent write endpoint unavailable: {e}");
+        }
     }
 }
 
@@ -777,7 +782,10 @@ pub fn run() {
             // Start the inbound HTTP endpoint if it was left enabled.
             let http = handle.state::<SettingsState>().snapshot().http;
             if http.enabled {
-                handle.state::<receiver::HttpController>().apply(handle, true, http.port);
+                if let Err(e) = handle.state::<receiver::HttpController>().apply(handle, true, http.port) {
+                    let warnings = handle.state::<storage::StartupWarnings>();
+                    warnings.0.lock().unwrap().push(format!("HTTP endpoint couldn't start: {e}"));
+                }
             }
             // Live-reload the JSON stores when they change on disk.
             spawn_store_watcher(handle.clone());

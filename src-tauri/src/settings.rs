@@ -3,7 +3,6 @@
 //! and reads a response from. No inbound server, so no tunnel or open port.
 
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 

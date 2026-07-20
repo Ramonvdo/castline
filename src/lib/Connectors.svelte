@@ -91,14 +91,25 @@
   const dayOf = (ts) => (ts || "").slice(5, 10);
 
   async function toggleHttp() {
-    await setHttpEndpoint(!http.enabled, Number(http.port) || 8787);
-    http = await httpStatus();
-    flash(http.enabled ? "HTTP endpoint on" : "HTTP endpoint off");
+    try {
+      await setHttpEndpoint(!http.enabled, Number(http.port) || 8787);
+      http = await httpStatus();
+      flash(http.enabled ? "HTTP endpoint on" : "HTTP endpoint off");
+    } catch (e) {
+      // Bind failed (port in use?) — show the real status, not a fake success.
+      http = await httpStatus();
+      flash(String(e));
+    }
   }
   async function applyPort() {
-    await setHttpEndpoint(http.enabled, Number(http.port) || 8787);
-    http = await httpStatus();
-    flash("Port saved");
+    try {
+      await setHttpEndpoint(http.enabled, Number(http.port) || 8787);
+      http = await httpStatus();
+      flash("Port saved");
+    } catch (e) {
+      http = await httpStatus();
+      flash(String(e));
+    }
   }
   const actionUrl = (id) => `${http.baseUrl}/api/${id}`;
   const headerLines = () =>

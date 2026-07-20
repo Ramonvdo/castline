@@ -38,10 +38,14 @@ pub struct HttpController {
 
 impl HttpController {
     /// Stop any running server, then start one on `port` when `enabled`.
-    pub fn apply(&self, app: &AppHandle, enabled: bool, port: u16) {
+    /// Err carries a human-readable message when the port can't be bound —
+    /// callers must not report the endpoint as listening in that case.
+    pub fn apply(&self, app: &AppHandle, enabled: bool, port: u16) -> Result<(), String> {
         self.stop();
         if enabled {
-            self.start(app, port);
+            self.start(app, port)
+        } else {
+            Ok(())
         }
     }
 
@@ -54,16 +58,28 @@ impl HttpController {
         }
     }
 
-    fn start(&self, app: &AppHandle, port: u16) {
+    /// Bind the loopback listener. Separate from `start` so the failure path
+    /// is unit-testable without an `AppHandle`.
+    fn bind(port: u16) -> Result<tiny_http::Server, String> {
+        tiny_http::Server::http(("127.0.0.1", port))
+            .map_err(|e| format!("couldn't bind 127.0.0.1:{port}: {e}"))
+    }
+
+    fn start(&self, app: &AppHandle, port: u16) -> Result<(), String> {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
         let app = app.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
 
         let handle = std::thread::spawn(move || {
-            let server = match tiny_http::Server::http(("127.0.0.1", port)) {
-                Ok(s) => s,
+            let server = match Self::bind(port) {
+                Ok(s) => {
+                    let _ = tx.send(Ok(()));
+                    s
+                }
                 Err(e) => {
-                    eprintln!("[castline] HTTP endpoint failed to bind 127.0.0.1:{port}: {e}");
+                    eprintln!("[castline] HTTP endpoint failed to bind: {e}");
+                    let _ = tx.send(Err(e));
                     return;
                 }
             };
@@ -77,7 +93,23 @@ impl HttpController {
             }
         });
 
-        *self.inner.lock().unwrap() = Some(RunningServer { stop, handle: Some(handle), port });
+        // Only record a running server once the thread confirms the bind, so
+        // `active_port()` (and everything built on it) never lies.
+        match rx.recv_timeout(Duration::from_secs(3)) {
+            Ok(Ok(())) => {
+                *self.inner.lock().unwrap() =
+                    Some(RunningServer { stop, handle: Some(handle), port });
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let _ = handle.join();
+                Err(e)
+            }
+            Err(_) => {
+                stop.store(true, Ordering::Relaxed);
+                Err(format!("timed out waiting for 127.0.0.1:{port} to bind"))
+            }
+        }
     }
 
     pub fn active_port(&self) -> Option<u16> {
@@ -362,5 +394,20 @@ mod tests {
         // An unset (empty) configured token can never be matched.
         assert!(!tokens_match("", ""));
         assert!(!tokens_match("anything", ""));
+    }
+
+    #[test]
+    fn bind_reports_conflict_and_succeeds_when_free() {
+        // Occupy a port, then confirm bind() surfaces the conflict…
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = busy.local_addr().unwrap().port();
+        let err = match HttpController::bind(port) {
+            Err(e) => e,
+            Ok(_) => panic!("bind should fail on an occupied port"),
+        };
+        assert!(err.contains(&port.to_string()), "error names the port: {err}");
+        // …and succeeds once the OS picks a free one.
+        drop(busy);
+        assert!(HttpController::bind(0).is_ok());
     }
 }
