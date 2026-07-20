@@ -16,6 +16,7 @@
     onProfilesChanged,
     onLibraryChanged,
     onScheduleRan,
+    storageWarnings,
   } from "./lib/api.js";
 
   const appWindow = getCurrentWindow();
@@ -91,16 +92,21 @@
 
   let toast = $state("");
   let toastTimer;
-  function flash(m) {
+  function flash(m, ms = 2000) {
     toast = m;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toast = ""), 2000);
+    toastTimer = setTimeout(() => (toast = ""), ms);
   }
 
   onMount(async () => {
     settings = await getSettings();
     library = await getLibrary();
     profiles = await getProfiles();
+
+    // Surface anything that went wrong while the stores loaded (e.g. a
+    // corrupt file that was quarantined) — long timeout, it matters.
+    const warns = await storageWarnings();
+    if (warns.length) flash(warns.join(" · "), 10000);
 
     const un = await onProfilesChanged(async () => {
       profiles = await getProfiles();

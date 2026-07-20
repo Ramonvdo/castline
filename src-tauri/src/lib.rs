@@ -10,6 +10,7 @@ mod agent;
 mod llm;
 mod scheduler;
 mod history;
+mod storage;
 
 use std::path::Path;
 
@@ -469,6 +470,13 @@ fn http_status(app: AppHandle) -> serde_json::Value {
     })
 }
 
+/// Problems collected while the stores loaded (e.g. a corrupt file that was
+/// quarantined). Drained on first read so the toast shows once.
+#[tauri::command]
+fn storage_warnings(app: AppHandle) -> Vec<String> {
+    app.state::<storage::StartupWarnings>().0.lock().unwrap().drain(..).collect()
+}
+
 // ─── AI agent (embedded Claude Code terminal) ────────────────────────────────
 
 /// Ensure the inbound endpoint is on (with a token) so the agent has a write
@@ -740,6 +748,14 @@ fn import_profiles_from(app: AppHandle, path: String, mode: String) -> Result<Pr
 pub fn run() {
     let data_dir = settings::app_data_dir();
 
+    // Load the stores before the builder so problems (quarantined corrupt
+    // files) can be collected and surfaced once the webview is up.
+    let mut warnings = Vec::new();
+    let library = LibraryState::load(data_dir.join("library.json"), &mut warnings);
+    let profiles = ProfilesState::load(data_dir.join("profiles.json"), &mut warnings);
+    let app_settings = SettingsState::load(&mut warnings);
+    let history = history::HistoryState::load(data_dir.join("history.json"), &mut warnings);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -749,12 +765,13 @@ pub fn run() {
             Some(vec!["--autostart"]),
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .manage(LibraryState::load(data_dir.join("library.json")))
-        .manage(ProfilesState::load(data_dir.join("profiles.json")))
-        .manage(SettingsState::load())
+        .manage(library)
+        .manage(profiles)
+        .manage(app_settings)
         .manage(receiver::HttpController::default())
         .manage(ai::AiState::default())
-        .manage(history::HistoryState::load(data_dir.join("history.json")))
+        .manage(history)
+        .manage(storage::StartupWarnings(std::sync::Mutex::new(warnings)))
         .setup(|app| {
             let handle = app.handle();
             // Start the inbound HTTP endpoint if it was left enabled.
@@ -878,6 +895,7 @@ pub fn run() {
             set_connectors,
             set_http_endpoint,
             http_status,
+            storage_warnings,
             ai_status,
             ai_start,
             ai_input,

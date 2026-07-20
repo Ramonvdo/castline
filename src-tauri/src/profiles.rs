@@ -77,16 +77,17 @@ pub struct ProfilesState {
 }
 
 impl ProfilesState {
-    pub fn load(path: PathBuf) -> Self {
-        let mut data = match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-            Err(_) => {
+    pub fn load(path: PathBuf, warnings: &mut Vec<String>) -> Self {
+        let mut data = match crate::storage::load_json::<ProfilesData>(&path) {
+            crate::storage::LoadedStore::Parsed(d) => d,
+            crate::storage::LoadedStore::Corrupt { backup } => {
+                warnings.push(crate::storage::corrupt_warning("profiles.json", &backup));
+                ProfilesData::default()
+            }
+            crate::storage::LoadedStore::Missing => {
                 let d = ProfilesData::default();
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
                 if let Ok(json) = serde_json::to_string_pretty(&d) {
-                    let _ = std::fs::write(&path, json);
+                    let _ = crate::storage::write_atomic(&path, &json);
                 }
                 d
             }
@@ -95,7 +96,7 @@ impl ProfilesState {
         // the global list once and persist immediately.
         if migrate_locked(&mut data) {
             if let Ok(json) = serde_json::to_string_pretty(&data) {
-                let _ = std::fs::write(&path, json);
+                let _ = crate::storage::write_atomic(&path, &json);
             }
         }
         ProfilesState { data: Mutex::new(data), path }
@@ -103,11 +104,8 @@ impl ProfilesState {
 
     pub fn save(&self) {
         if let Ok(data) = self.data.lock() {
-            if let Some(dir) = self.path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
             if let Ok(json) = serde_json::to_string_pretty(&*data) {
-                let _ = std::fs::write(&self.path, json);
+                let _ = crate::storage::write_atomic(&self.path, &json);
             }
         }
     }

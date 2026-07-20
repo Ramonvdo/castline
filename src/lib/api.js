@@ -52,6 +52,9 @@ export const clearSendHistory = () => invoke("clear_send_history");
 export const httpStatus = () => invoke("http_status");
 export const setHttpEndpoint = (enabled, port) => invoke("set_http_endpoint", { enabled, port });
 
+// Problems collected while the data stores loaded (drained on read).
+export const storageWarnings = () => invoke("storage_warnings");
+
 // ── Castline AI (OpenRouter enrich workflow) ──
 // context = user-typed notes / attached file text. Everything else is opt-in
 // per run: webSearch (live web), useTone (profile tone → Settings tone),

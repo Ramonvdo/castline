@@ -94,21 +94,22 @@ pub struct HistoryState {
 }
 
 impl HistoryState {
-    pub fn load(path: PathBuf) -> Self {
-        let data = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
+    pub fn load(path: PathBuf, warnings: &mut Vec<String>) -> Self {
+        let data = match crate::storage::load_json::<Vec<SendRecord>>(&path) {
+            crate::storage::LoadedStore::Parsed(d) => d,
+            crate::storage::LoadedStore::Corrupt { backup } => {
+                warnings.push(crate::storage::corrupt_warning("history.json", &backup));
+                Vec::new()
+            }
+            crate::storage::LoadedStore::Missing => Vec::new(),
+        };
         HistoryState { data: Mutex::new(data), path }
     }
 
     pub fn save(&self) {
         if let Ok(data) = self.data.lock() {
-            if let Some(dir) = self.path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
             if let Ok(json) = serde_json::to_string_pretty(&*data) {
-                let _ = std::fs::write(&self.path, json);
+                let _ = crate::storage::write_atomic(&self.path, &json);
             }
         }
     }
@@ -178,7 +179,7 @@ mod tests {
         let path = dir.path().join("history.json");
         let state = HistoryState { data: Mutex::new(list), path: path.clone() };
         state.save();
-        let reloaded = HistoryState::load(path);
+        let reloaded = HistoryState::load(path, &mut Vec::new());
         let data = reloaded.data.lock().unwrap();
         assert_eq!(data.len(), HISTORY_CAP);
         assert_eq!(data[0].label, format!("send {}", HISTORY_CAP + 9));

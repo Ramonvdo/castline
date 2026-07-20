@@ -188,17 +188,19 @@ pub struct LibraryState {
 
 impl LibraryState {
     /// Load from `path`, falling back to seeded defaults (and writing them) when
-    /// the file is missing or unreadable.
-    pub fn load(path: PathBuf) -> Self {
-        let data = match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-            Err(_) => {
+    /// the file is missing. An unparseable file is quarantined — never
+    /// overwritten — and a warning is pushed for the UI to surface.
+    pub fn load(path: PathBuf, warnings: &mut Vec<String>) -> Self {
+        let data = match crate::storage::load_json::<LibraryData>(&path) {
+            crate::storage::LoadedStore::Parsed(d) => d,
+            crate::storage::LoadedStore::Corrupt { backup } => {
+                warnings.push(crate::storage::corrupt_warning("library.json", &backup));
+                LibraryData::default()
+            }
+            crate::storage::LoadedStore::Missing => {
                 let d = LibraryData::default();
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
                 if let Ok(json) = serde_json::to_string_pretty(&d) {
-                    let _ = std::fs::write(&path, json);
+                    let _ = crate::storage::write_atomic(&path, &json);
                 }
                 d
             }
@@ -206,14 +208,11 @@ impl LibraryState {
         LibraryState { data: Mutex::new(data), path }
     }
 
-    /// Persist the current data to disk (best-effort, pretty JSON).
+    /// Persist the current data to disk (best-effort, pretty JSON, atomic).
     pub fn save(&self) {
         if let Ok(data) = self.data.lock() {
-            if let Some(dir) = self.path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
             if let Ok(json) = serde_json::to_string_pretty(&*data) {
-                let _ = std::fs::write(&self.path, json);
+                let _ = crate::storage::write_atomic(&self.path, &json);
             }
         }
     }
@@ -610,15 +609,39 @@ mod tests {
     fn save_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.json");
-        let state = LibraryState::load(path.clone());
+        let state = LibraryState::load(path.clone(), &mut Vec::new());
         {
             let mut data = state.data.lock().unwrap();
             create_folder(&mut data, "Roundtrip");
         }
         state.save();
 
-        let reloaded = LibraryState::load(path);
+        let reloaded = LibraryState::load(path, &mut Vec::new());
         let data = reloaded.data.lock().unwrap();
         assert!(data.folders.iter().any(|f| f.name == "Roundtrip"));
+    }
+
+    #[test]
+    fn corrupt_library_is_quarantined_and_survives_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        std::fs::write(&path, "{ definitely not json").unwrap();
+
+        let mut warnings = Vec::new();
+        let state = LibraryState::load(path.clone(), &mut warnings);
+        assert_eq!(warnings.len(), 1, "corrupt load should warn");
+        // Fell back to the seeded defaults…
+        assert!(!state.data.lock().unwrap().folders.is_empty());
+
+        // …and even after a save, the original bytes are still recoverable.
+        state.save();
+        let backup = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().starts_with("library.json.corrupt-"))
+            .expect("quarantined backup exists");
+        assert_eq!(std::fs::read_to_string(backup.path()).unwrap(), "{ definitely not json");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(serde_json::from_str::<LibraryData>(&saved).is_ok());
     }
 }

@@ -23,20 +23,11 @@ pub struct AgentContext {
     pub variables: Vec<(String, String)>,
 }
 
-/// Write atomically (tmp + rename) so the agent never reads a torn file.
-fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("md.tmp");
-    fs::write(&tmp, content)?;
-    fs::rename(&tmp, path)
-}
-
 /// Render + write the workspace CLAUDE.md. Regenerated on every agent start /
 /// context refresh (durable notes go in MEMORY.md, which we never overwrite).
+/// Written atomically so the agent never reads a torn file.
 pub fn write_claude_md(root: &Path, ctx: &AgentContext) -> io::Result<()> {
-    write_atomic(&root.join("CLAUDE.md"), &render_claude_md(ctx))
+    crate::storage::write_atomic(&root.join("CLAUDE.md"), &render_claude_md(ctx))
 }
 
 fn render_claude_md(ctx: &AgentContext) -> String {

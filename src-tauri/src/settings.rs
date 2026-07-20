@@ -266,10 +266,14 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
-    pub fn load() -> Self {
-        let data = match fs::read_to_string(settings_path()) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-            Err(_) => {
+    pub fn load(warnings: &mut Vec<String>) -> Self {
+        let data = match crate::storage::load_json::<AppSettings>(&settings_path()) {
+            crate::storage::LoadedStore::Parsed(d) => d,
+            crate::storage::LoadedStore::Corrupt { backup } => {
+                warnings.push(crate::storage::corrupt_warning("settings.json", &backup));
+                AppSettings::default()
+            }
+            crate::storage::LoadedStore::Missing => {
                 let d = AppSettings::default();
                 let _ = save_to_disk(&d);
                 d
@@ -290,11 +294,9 @@ impl SettingsState {
 }
 
 fn save_to_disk(settings: &AppSettings) -> std::io::Result<()> {
-    let dir = app_config_dir();
-    fs::create_dir_all(&dir)?;
     let text = serde_json::to_string_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    fs::write(settings_path(), text)
+    crate::storage::write_atomic(&settings_path(), &text)
 }
 
 #[cfg(test)]
