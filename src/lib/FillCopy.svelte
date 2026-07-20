@@ -62,7 +62,14 @@
   }
 
   // Seed keys; prefill from the active profile (or a picked one) where present.
+  // Reseed only when the fill target actually changes — a background
+  // profiles-changed refresh mints a NEW activeProfile object with the same id
+  // and must not wipe what the user (or AI fill) already entered.
+  let seededFor = null;
   $effect(() => {
+    const key = (item ? item.id : "") + "::" + (activeProfile ? activeProfile.id : "");
+    if (key === seededFor) return;
+    seededFor = key;
     const src = activeProfile ? activeProfile.values : {};
     const seed = {};
     for (const v of itemVars(item)) seed[v] = src[v] ?? "";
