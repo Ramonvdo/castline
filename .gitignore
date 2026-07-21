@@ -16,6 +16,9 @@ src-tauri/gen/schemas/
 .env.*
 !.env.example
 
+# Personal / private notes (never commit — this repo is public)
+future-steps.md
+
 # Editor / OS
 .DS_Store
 .vscode/*
