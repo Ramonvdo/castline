@@ -67,6 +67,14 @@ fn lib_set_folder_icon(app: AppHandle, id: String, icon: String) -> LibraryData 
     with_library(&app, |d| library::set_folder_icon(d, &id, &icon))
 }
 
+// Create (empty `id`) or update a folder's name+icon+color in one atomic save —
+// used by the folder editor so a just-set icon/color can't be lost to the
+// store-watcher reloading an intermediate state.
+#[tauri::command]
+fn lib_upsert_folder(app: AppHandle, id: String, name: String, icon: String, color: String) -> LibraryData {
+    with_library(&app, |d| library::upsert_folder(d, &id, &name, &icon, &color))
+}
+
 #[tauri::command]
 fn lib_reorder_folders(app: AppHandle, ids: Vec<String>) -> LibraryData {
     with_library(&app, |d| library::reorder_folders(d, &ids))
@@ -875,6 +883,7 @@ pub fn run() {
             lib_delete_folder,
             lib_set_folder_color,
             lib_set_folder_icon,
+            lib_upsert_folder,
             lib_reorder_folders,
             lib_save_item,
             lib_delete_item,

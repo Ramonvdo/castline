@@ -12,6 +12,9 @@ export const libRenameFolder = (id, name) => invoke("lib_rename_folder", { id, n
 export const libDeleteFolder = (id) => invoke("lib_delete_folder", { id });
 export const libSetFolderColor = (id, color) => invoke("lib_set_folder_color", { id, color });
 export const libSetFolderIcon = (id, icon) => invoke("lib_set_folder_icon", { id, icon });
+// Create (empty id) or update a folder's name+icon+color in one atomic save.
+export const libUpsertFolder = (id, name, icon, color) =>
+  invoke("lib_upsert_folder", { id, name, icon, color });
 export const libReorderFolders = (ids) => invoke("lib_reorder_folders", { ids });
 export const libSaveItem = (folderId, item) => invoke("lib_save_item", { folderId, item });
 export const libDeleteItem = (folderId, itemId) => invoke("lib_delete_item", { folderId, itemId });

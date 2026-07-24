@@ -106,7 +106,7 @@ export function itemPayload(item, values = {}, profileName = null) {
       : [applyVars(item.text || "", values)];
   return {
     name: item.name,
-    type: item.item_type || "",
+    type: item.type || "",
     kind: item.kind,
     tags: item.tags || [],
     subject: applyVars(item.subject || "", values),
@@ -126,7 +126,7 @@ export function itemPayload(item, values = {}, profileName = null) {
 export function selectionPayload(items, values = {}, profileName = null) {
   const filled = items.map((item) => ({
     name: item.name,
-    type: item.item_type || "",
+    type: item.type || "",
     kind: item.kind,
     tags: item.tags || [],
     subject: applyVars(item.subject || "", values),

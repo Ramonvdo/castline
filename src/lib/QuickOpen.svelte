@@ -48,7 +48,7 @@
   let results = $derived.by(() => {
     const q = query.trim();
     const scored = all.map((e) => {
-      const hay = `${e.item.name} ${e.folderName} ${(e.item.tags || []).join(" ")} ${e.item.item_type || ""}`;
+      const hay = `${e.item.name} ${e.folderName} ${(e.item.tags || []).join(" ")} ${e.item.type || ""}`;
       return { ...e, s: q ? score(hay, q) : 0 };
     });
     const filtered = q ? scored.filter((e) => e.s >= 0) : scored;

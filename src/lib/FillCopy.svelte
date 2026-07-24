@@ -109,7 +109,7 @@
     groupVarsByLayout(allSopVars, layout).filter((g) => g.vars.length),
   );
   let isEmail = $derived(
-    item && item.item_type === "email" && (item.subject || "").length > 0,
+    item && item.type === "email" && (item.subject || "").length > 0,
   );
 
   let preview = $derived.by(() => {

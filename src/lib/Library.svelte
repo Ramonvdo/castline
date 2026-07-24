@@ -1,10 +1,7 @@
 <script>
   import {
-    libCreateFolder,
-    libRenameFolder,
+    libUpsertFolder,
     libDeleteFolder,
-    libSetFolderColor,
-    libSetFolderIcon,
     libReorderFolders,
     libReorderItems,
     libSaveItem,
@@ -104,7 +101,7 @@
         ({ item: i }) =>
           i.name.toLowerCase().includes(q) ||
           (i.text || "").toLowerCase().includes(q) ||
-          (i.item_type || "").toLowerCase().includes(q) ||
+          (i.type || "").toLowerCase().includes(q) ||
           (i.steps || []).some(
             (s) =>
               s.title.toLowerCase().includes(q) ||
@@ -201,21 +198,16 @@
       flash("Folder name is required");
       return;
     }
-    if (fmMode === "new") {
-      let lib = await libCreateFolder(name);
-      const newId = lib.folders[lib.folders.length - 1].id;
-      lib = await libSetFolderIcon(newId, fmIcon);
-      if (fmColor) lib = await libSetFolderColor(newId, fmColor);
-      library = lib;
-      activeId = newId;
-    } else {
-      let lib = await libRenameFolder(fmId, name);
-      lib = await libSetFolderIcon(fmId, fmIcon);
-      lib = await libSetFolderColor(fmId, fmColor);
-      library = lib;
-    }
+    // One atomic upsert (create when new, else update) — doing name+icon+color in
+    // a single save stops the store-watcher from reloading an intermediate state
+    // and dropping the just-picked icon/colour.
+    const isNew = fmMode === "new";
+    const lib = await libUpsertFolder(isNew ? "" : fmId, name, fmIcon, fmColor);
+    library = lib;
+    // create appends with no sort, so the new folder is reliably the last one.
+    if (isNew) activeId = lib.folders[lib.folders.length - 1].id;
     folderModalOpen = false;
-    flash(fmMode === "new" ? "Folder created" : "Folder saved");
+    flash(isNew ? "Folder created" : "Folder saved");
   }
   async function deleteFolderConfirmed() {
     if (!fmId) return;
@@ -343,7 +335,7 @@
     fType =
       item.kind === "sop"
         ? "sop"
-        : item.item_type === "email"
+        : item.type === "email"
           ? "email"
           : "text";
     fSubject = item.subject || "";
@@ -897,7 +889,7 @@
                   class="sop-badge"
                   title={`SOP · ${item.steps.length} steps`}
                   ><Icon name="sop" size={11} />{item.steps.length}</span
-                >{:else if item.item_type === "email"}<span
+                >{:else if item.type === "email"}<span
                   class="sop-badge"
                   title="Email — subject is mapped separately in webhooks"
                   >✉</span

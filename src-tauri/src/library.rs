@@ -282,6 +282,26 @@ pub fn set_folder_icon(data: &mut LibraryData, id: &str, icon: &str) {
     }
 }
 
+/// Create (empty/unknown `id` → new folder, appended) or update (matching `id`)
+/// a folder's name + icon + color in a SINGLE mutation. Collapsing the editor's
+/// create/rename/set-icon/set-color into one save avoids the store-watcher
+/// reloading an intermediate state and dropping the just-set icon/color.
+pub fn upsert_folder(data: &mut LibraryData, id: &str, name: &str, icon: &str, color: &str) {
+    if let Some(f) = data.folders.iter_mut().find(|f| f.id == id) {
+        f.name = name.trim().to_string();
+        f.icon = icon.to_string();
+        f.color = color.to_string();
+    } else {
+        data.folders.push(LibFolder {
+            id: gen_id(),
+            name: name.trim().to_string(),
+            color: color.to_string(),
+            icon: icon.to_string(),
+            items: vec![],
+        });
+    }
+}
+
 pub fn reorder_folders(data: &mut LibraryData, ids: &[String]) {
     let mut reordered: Vec<LibFolder> = Vec::with_capacity(data.folders.len());
     for id in ids {
@@ -454,6 +474,28 @@ mod tests {
         assert_eq!(d.folders.len(), 1);
         assert!(d.folders[0].items.len() >= 2);
         assert!(d.folders[0].items.iter().any(|i| i.kind == "sop"));
+    }
+
+    #[test]
+    fn upsert_folder_creates_with_icon_then_updates() {
+        let mut d = LibraryData { folders: vec![] };
+        // Empty id → create, appended, with icon + colour applied in ONE mutation
+        // (the fix for the "new folder icon sometimes doesn't stick" race).
+        upsert_folder(&mut d, "", "Work", "rocket", "#c98b8b");
+        assert_eq!(d.folders.len(), 1);
+        let fid = d.folders[0].id.clone();
+        assert!(!fid.is_empty());
+        assert_eq!(d.folders[0].name, "Work");
+        assert_eq!(d.folders[0].icon, "rocket");
+        assert_eq!(d.folders[0].color, "#c98b8b");
+
+        // Matching id → update in place (no new folder), all three fields change.
+        upsert_folder(&mut d, &fid, "Renamed", "star", "#6fa8c9");
+        assert_eq!(d.folders.len(), 1);
+        assert_eq!(d.folders[0].id, fid);
+        assert_eq!(d.folders[0].name, "Renamed");
+        assert_eq!(d.folders[0].icon, "star");
+        assert_eq!(d.folders[0].color, "#6fa8c9");
     }
 
     #[test]
