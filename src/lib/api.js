@@ -38,6 +38,7 @@ export const profileFromJson = (jsonText) => invoke("profile_from_json", { jsonT
 
 // ── Clipboard ──
 export const clipCopy = (text) => invoke("clip_copy", { text });
+export const clipRead = () => invoke("clip_read");
 
 // ── Settings / outbound connectors ──
 export const getSettings = () => invoke("get_settings");
@@ -86,6 +87,13 @@ export const exportProfilesTo = (path) => invoke("export_profiles_to", { path })
 export const importProfilesFrom = (path, mode) => invoke("import_profiles_from", { path, mode });
 // Write arbitrary text to a path (used by "Export selected → .md").
 export const saveTextFile = (path, contents) => invoke("save_text_file", { path, contents });
+
+// ── Blueprints (shareable template files) ──
+// build → the JSON text (caller decides: save to a file, or copy to the clipboard).
+// parse → preview only, nothing is written. import → the fresh LibraryData.
+export const blueprintBuild = (folderId, itemIds) => invoke("blueprint_build", { folderId, itemIds });
+export const blueprintParse = (text) => invoke("blueprint_parse", { text });
+export const blueprintImport = (folderId, text) => invoke("blueprint_import", { folderId, text });
 
 // ── AI agent (embedded Claude Code terminal) ──
 export const aiStatus = () => invoke("ai_status");

@@ -1,5 +1,6 @@
 //! Castline — Tauri command wiring, managed state, and app setup.
 
+mod blueprint;
 mod library;
 mod profiles;
 mod settings;
@@ -419,6 +420,13 @@ fn clip_copy(app: AppHandle, text: String) -> bool {
     app.clipboard().write_text(text).is_ok()
 }
 
+/// Read the clipboard — powers "paste a blueprint someone sent you".
+#[tauri::command]
+fn clip_read(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().read_text().map_err(|e| e.to_string())
+}
+
 // ─── Settings / connectors ───────────────────────────────────────────────────
 
 #[tauri::command]
@@ -732,6 +740,104 @@ fn save_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| e.to_string())
 }
 
+// ─── Blueprints (shareable template files) ───────────────────────────────────
+
+/// Serialize the given items as a blueprint. `folder_id` only decides whether
+/// folder presentation rides along — the items are looked up library-wide, so a
+/// multi-select spanning folders exports fine.
+#[tauri::command]
+fn blueprint_build(
+    app: AppHandle,
+    folder_id: Option<String>,
+    item_ids: Vec<String>,
+) -> Result<String, String> {
+    let data = app.state::<LibraryState>().data.lock().unwrap().clone();
+    // Resolve in the order asked for, so a picked selection exports in pick order.
+    let items: Vec<library::LibItem> = item_ids
+        .iter()
+        .filter_map(|id| {
+            data.folders
+                .iter()
+                .flat_map(|f| f.items.iter())
+                .find(|i| &i.id == id)
+                .cloned()
+        })
+        .collect();
+    if items.is_empty() {
+        return Err("Nothing to export.".into());
+    }
+    let folder = folder_id
+        .as_deref()
+        .and_then(|fid| data.folders.iter().find(|f| f.id == fid));
+    let bp = blueprint::from_items(&items, folder, env!("CARGO_PKG_VERSION"));
+    serde_json::to_string_pretty(&bp).map_err(|e| e.to_string())
+}
+
+/// Parse without importing — powers the preview shown before anything lands.
+#[tauri::command]
+fn blueprint_parse(text: String) -> Result<blueprint::Blueprint, String> {
+    blueprint::parse(&text)
+}
+
+/// Import a blueprint into `folder_id`, or into a folder created from the
+/// blueprint's own folder metadata when none is given.
+#[tauri::command]
+fn blueprint_import(
+    app: AppHandle,
+    folder_id: Option<String>,
+    text: String,
+) -> Result<LibraryData, String> {
+    let bp = blueprint::parse(&text)?;
+    let items = blueprint::to_lib_items(&bp);
+
+    if let Some(id) = folder_id.as_deref() {
+        // upsert_item silently no-ops on an unknown folder, which would look like
+        // a successful import that quietly dropped everything. Fail loudly instead.
+        let known = app
+            .state::<LibraryState>()
+            .data
+            .lock()
+            .unwrap()
+            .folders
+            .iter()
+            .any(|f| f.id == id);
+        if !known {
+            return Err("That folder no longer exists.".into());
+        }
+    }
+
+    // Create-the-folder and insert-the-items happen in ONE save: two saves in a
+    // row race the store file-watcher, which can re-apply the snapshot it read
+    // between them and silently undo the second half.
+    Ok(with_library(&app, |d| {
+        let target = match folder_id.clone() {
+            Some(id) => id,
+            None => {
+                let name = bp
+                    .folder
+                    .as_ref()
+                    .map(|f| f.name.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "Imported".to_string());
+                library::create_folder(d, &name);
+                match d.folders.last_mut() {
+                    Some(f) => {
+                        if let Some(meta) = bp.folder.as_ref() {
+                            f.icon = meta.icon.clone();
+                            f.color = meta.color.clone();
+                        }
+                        f.id.clone()
+                    }
+                    None => return,
+                }
+            }
+        };
+        for item in items {
+            library::upsert_item(d, &target, item);
+        }
+    }))
+}
+
 #[tauri::command]
 fn export_profiles_to(app: AppHandle, path: String) -> Result<(), String> {
     let data = app.state::<ProfilesState>().data.lock().unwrap().clone();
@@ -908,6 +1014,10 @@ pub fn run() {
             set_autostart,
             read_text_file,
             clip_copy,
+            clip_read,
+            blueprint_build,
+            blueprint_parse,
+            blueprint_import,
             get_settings,
             set_connectors,
             set_http_endpoint,

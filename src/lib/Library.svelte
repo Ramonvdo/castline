@@ -10,9 +10,14 @@
     libToggleFavorite,
     libRecordUse,
     clipCopy,
+    clipRead,
     connectorSend,
     pickSaveDoc,
+    pickSaveFile,
+    pickOpenFile,
+    readTextFile,
     saveTextFile,
+    blueprintBuild,
   } from "./api.js";
   import {
     extractVars,
@@ -37,6 +42,10 @@
     connectors = [],
     flash,
     onFill,
+    onBlueprintText = () => {},
+    // Surfaced so a blueprint dropped on the window defaults to the folder
+    // you're actually looking at (null while in All / Pinned).
+    currentFolderId = $bindable(null),
   } = $props();
 
   // View density: compact drops previews/tags; super shows name-only cards
@@ -65,6 +74,9 @@
     realFolders.find((f) => f.id === activeId) || null,
   );
   let isVirtual = $derived(activeId === ALL || activeId === FAV);
+  $effect(() => {
+    currentFolderId = activeFolder ? activeFolder.id : null;
+  });
 
   // Every item in the current scope, tagged with its folder for context.
   let scopedEntries = $derived.by(() => {
@@ -161,6 +173,7 @@
     fmIcon = "folder";
     fmColor = "";
     fmConfirmDelete = false;
+    snapshotFolder();
     folderModalOpen = true;
   }
   function openEditFolder() {
@@ -178,6 +191,7 @@
     fmIcon = f.icon || "folder";
     fmColor = f.color || "";
     fmConfirmDelete = !!opts.confirmDelete;
+    snapshotFolder();
     folderModalOpen = true;
   }
 
@@ -295,6 +309,43 @@
   let fSteps = $state([]);
   let fFolderId = $state(null);
 
+  // ── Don't lose typed work ──
+  // A mis-click on the blurred backdrop used to discard an in-progress item.
+  // Snapshot the form when it opens; an untouched form still closes instantly,
+  // a touched one asks first. Plain variables (not $state) — they're only ever
+  // read inside event handlers, so they don't need to be reactive.
+  let editorSnapshot = "";
+  let fmSnapshot = "";
+  let discardKind = $state(null); // "item" | "folder" | null
+
+  function editorForm() {
+    return JSON.stringify({ fName, fTags, fType, fSubject, fText, fSteps, fFolderId });
+  }
+  function snapshotEditor() {
+    editorSnapshot = editorForm();
+  }
+  function tryCloseEditor() {
+    if (editorForm() !== editorSnapshot) discardKind = "item";
+    else editorOpen = false;
+  }
+
+  function folderForm() {
+    return JSON.stringify({ fmName, fmIcon, fmColor });
+  }
+  function snapshotFolder() {
+    fmSnapshot = folderForm();
+  }
+  function tryCloseFolder() {
+    if (folderForm() !== fmSnapshot) discardKind = "folder";
+    else folderModalOpen = false;
+  }
+
+  function confirmDiscard() {
+    if (discardKind === "item") editorOpen = false;
+    else if (discardKind === "folder") folderModalOpen = false;
+    discardKind = null;
+  }
+
   let editorVars = $derived.by(() => {
     const all = fType === "email" ? extractVars(fSubject) : [];
     if (fType === "sop") {
@@ -324,6 +375,7 @@
     fSubject = "";
     fText = "";
     fSteps = [{ id: "", title: "Step 1", text: "" }];
+    snapshotEditor();
     editorOpen = true;
   }
   function openEditItem(folderId, item) {
@@ -343,6 +395,7 @@
     fSteps = (item.steps || []).map((s) => ({ ...s }));
     if (fType === "sop" && fSteps.length === 0)
       fSteps = [{ id: "", title: "Step 1", text: "" }];
+    snapshotEditor();
     editorOpen = true;
   }
   function addStep() {
@@ -620,6 +673,82 @@
     }
   }
 
+  // ── Blueprints: share templates as a small .json anyone can drop back in ──
+
+  function slug(name) {
+    const s = (name || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return s || "template";
+  }
+
+  // `folderId` only decides whether folder presentation rides along; the items
+  // themselves are looked up library-wide.
+  async function exportBlueprint(itemIds, folderId, filename) {
+    try {
+      const json = await blueprintBuild(folderId, itemIds);
+      const path = await pickSaveFile(filename);
+      if (!path) return;
+      await saveTextFile(path, json);
+      flash("Blueprint exported");
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  async function copyBlueprint(item) {
+    try {
+      const json = await blueprintBuild(null, [item.id]);
+      const ok = await clipCopy(json);
+      flash(ok ? "Blueprint copied — paste it to share" : "Copy failed");
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  function exportFolderBlueprint(folderId) {
+    const f = realFolders.find((x) => x.id === folderId);
+    if (!f) return;
+    if (!f.items.length) {
+      flash("That folder has no templates yet");
+      return;
+    }
+    exportBlueprint(
+      f.items.map((i) => i.id),
+      f.id,
+      `${slug(f.name)}.castline.json`,
+    );
+  }
+
+  // ── Importing a blueprint (the modal itself lives in App.svelte) ──
+  let importMenuOpen = $state(false);
+
+  async function importFromFile() {
+    importMenuOpen = false;
+    try {
+      const path = await pickOpenFile();
+      if (!path) return;
+      onBlueprintText(await readTextFile(path));
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  async function importFromClipboard() {
+    importMenuOpen = false;
+    try {
+      const text = await clipRead();
+      if (!text || !text.trim()) {
+        flash("Clipboard is empty");
+        return;
+      }
+      onBlueprintText(text);
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
   // Turn the picked items into one new SOP (great for assembling a client SOP).
   function newSopFromSelection() {
     if (!selected.length) return;
@@ -641,6 +770,7 @@
     fSubject = "";
     fText = "";
     fSteps = steps.length ? steps : [{ id: "", title: "Step 1", text: "" }];
+    snapshotEditor();
     editorOpen = true;
   }
 
@@ -744,6 +874,27 @@
         <option value="manual">Manual order</option>
         <option value="used">Most used</option>
       </select>
+      <div class="import-wrap">
+        <button
+          class="icon-btn import-btn"
+          title="Import a blueprint — or just drop a .json file anywhere"
+          onclick={() => (importMenuOpen = !importMenuOpen)}
+          ><Icon name="template" size={16} /></button
+        >
+        {#if importMenuOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div class="ctx-backdrop" onclick={() => (importMenuOpen = false)}></div>
+          <div class="import-menu">
+            <div class="ctx-label">Import blueprint</div>
+            <button class="ctx-item" onclick={importFromFile}>
+              <Icon name="reveal" size={14} /> From file…
+            </button>
+            <button class="ctx-item" onclick={importFromClipboard}>
+              <Icon name="copy" size={14} /> From clipboard
+            </button>
+          </div>
+        {/if}
+      </div>
       <button class="btn with-ic" onclick={openNewItem}
         ><Icon name="plus" size={15} /> New item</button
       >
@@ -991,6 +1142,16 @@
           <button class="ghost" onclick={exportSelectedMd}
             ><Icon name="reveal" size={14} /> Export .md</button
           >
+          <button
+            class="ghost"
+            title="Save these as one shareable blueprint file"
+            onclick={() =>
+              exportBlueprint(
+                selectedEntries.map((e) => e.item.id),
+                null,
+                "selection.castline.json",
+              )}><Icon name="template" size={14} /> Export blueprints</button
+          >
           <button class="ghost" onclick={newSopFromSelection}
             ><Icon name="sop" size={14} /> New SOP</button
           >
@@ -1008,7 +1169,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="overlay"
-    onclick={(e) => e.target === e.currentTarget && (editorOpen = false)}
+    onclick={(e) => e.target === e.currentTarget && tryCloseEditor()}
   >
     <div class="modal">
       <div class="modal-head">
@@ -1016,7 +1177,7 @@
         <button
           class="icon-btn"
           title="Close"
-          onclick={() => (editorOpen = false)}
+          onclick={tryCloseEditor}
           ><Icon name="close" size={16} /></button
         >
       </div>
@@ -1159,7 +1320,7 @@
       {/if}
 
       <div class="modal-actions">
-        <button class="ghost" onclick={() => (editorOpen = false)}
+        <button class="ghost" onclick={tryCloseEditor}
           >Cancel</button
         >
         <button class="btn" onclick={saveItem}>Save</button>
@@ -1173,7 +1334,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="overlay"
-    onclick={(e) => e.target === e.currentTarget && (folderModalOpen = false)}
+    onclick={(e) => e.target === e.currentTarget && tryCloseFolder()}
   >
     <div class="modal">
       <div class="modal-head">
@@ -1181,7 +1342,7 @@
         <button
           class="icon-btn"
           title="Close"
-          onclick={() => (folderModalOpen = false)}
+          onclick={tryCloseFolder}
           ><Icon name="close" size={16} /></button
         >
       </div>
@@ -1263,7 +1424,7 @@
           {/if}
         {/if}
         {#if !fmConfirmDelete}
-          <button class="ghost" onclick={() => (folderModalOpen = false)}
+          <button class="ghost" onclick={tryCloseFolder}
             >Cancel</button
           >
           <button class="btn" onclick={saveFolder}
@@ -1301,6 +1462,12 @@
       onclick={() => menuAction((id) => openEditFolderById(id))}
     >
       <Icon name="droplet" size={14} /> Change icon &amp; colour
+    </button>
+    <button
+      class="ctx-item"
+      onclick={() => menuAction((id) => exportFolderBlueprint(id))}
+    >
+      <Icon name="template" size={14} /> Export folder blueprint
     </button>
     <div class="ctx-sep"></div>
     <button
@@ -1353,6 +1520,26 @@
       }}
     >
       <Icon name="layers" size={14} /> Duplicate
+    </button>
+    <button
+      class="ctx-item"
+      onclick={() => {
+        const m = itemMenu;
+        itemMenu = null;
+        exportBlueprint([m.item.id], null, `${slug(m.item.name)}.castline.json`);
+      }}
+    >
+      <Icon name="template" size={14} /> Export blueprint
+    </button>
+    <button
+      class="ctx-item"
+      onclick={() => {
+        const m = itemMenu;
+        itemMenu = null;
+        copyBlueprint(m.item);
+      }}
+    >
+      <Icon name="copy" size={14} /> Copy as blueprint
     </button>
     <button
       class="ctx-item"
@@ -1419,6 +1606,27 @@
         {c.name || c.url}
       </button>
     {/each}
+  </div>
+{/if}
+
+{#if discardKind}
+  <!-- Sits above the editor it guards, so "Keep editing" returns you to your work. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="overlay discard"
+    onclick={(e) => e.target === e.currentTarget && (discardKind = null)}
+  >
+    <div class="modal confirm">
+      <div class="modal-head"><h3>Discard changes?</h3></div>
+      <p class="confirm-text">
+        You've made changes to this {discardKind === "item" ? "item" : "folder"} that
+        haven't been saved. Closing now will lose them.
+      </p>
+      <div class="modal-actions">
+        <button class="ghost" onclick={() => (discardKind = null)}>Keep editing</button>
+        <button class="ghost danger" onclick={confirmDiscard}>Discard</button>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -1513,6 +1721,36 @@
   }
   .modal.confirm {
     max-width: 380px;
+  }
+  /* The discard prompt guards an open editor, so it has to stack above it. */
+  .overlay.discard {
+    z-index: 70;
+  }
+
+  /* Toolbar import button + its little menu */
+  .import-wrap {
+    position: relative;
+    display: flex;
+  }
+  .import-btn {
+    width: 36px;
+    height: 36px;
+    border-color: var(--border);
+  }
+  .import-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 61;
+    min-width: 180px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-modal), var(--edge);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
   .confirm-text {
     color: var(--muted);

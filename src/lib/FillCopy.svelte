@@ -9,6 +9,7 @@
     autoValue,
     itemPayload,
   } from "./vars.js";
+  import { onMount } from "svelte";
   import { clipCopy, libRecordUse, connectorSend, llmEnrich } from "./api.js";
   import Icon from "./Icon.svelte";
 
@@ -80,11 +81,35 @@
     const seed = {};
     for (const v of itemVars(item)) seed[v] = src[v] ?? "";
     values = seed;
+    seeded = JSON.stringify(seed);
     stepIdx = 0;
     profileId = pid;
     stage = item && item.kind === "sop" ? "overview" : "single";
     hoverStep = null;
     aiFilled = [];
+  });
+
+  // ── Don't lose typed work ──
+  // A mis-click on the blurred backdrop used to discard everything typed here.
+  // `seeded` is a plain variable, not $state: reading it inside the effect that
+  // writes it would otherwise loop.
+  let seeded = "";
+  let confirmClose = $state(false);
+  function tryClose() {
+    if (JSON.stringify(values) !== seeded) confirmClose = true;
+    else onClose();
+  }
+
+  // Escape closes this modal too, but it must go through the same guard — the
+  // app-level handler deliberately leaves `fillItem` to us for that reason.
+  onMount(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      if (confirmClose) confirmClose = false;
+      else tryClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   });
 
   function applyProfile() {
@@ -363,7 +388,7 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => e.target === e.currentTarget && onClose()}>
+<div class="overlay" onclick={(e) => e.target === e.currentTarget && tryClose()}>
   <div class="modal wide">
     <h3>
       {activeProfile ? "Preview" : isSop ? "Copy step-by-step" : "Fill & copy"} —
@@ -534,7 +559,7 @@
     {/if}
 
     <div class="modal-actions">
-      <button class="ghost" onclick={onClose}>Close</button>
+      <button class="ghost" onclick={tryClose}>Close</button>
       {#if llmReady && itemVars(item).length}
         <div class="aifill-wrap">
           <button
@@ -612,6 +637,26 @@
   </div>
 </div>
 
+{#if confirmClose}
+  <!-- Stacks above the fill modal, so "Keep editing" returns you to your values. -->
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="overlay discard"
+    onclick={(e) => e.target === e.currentTarget && (confirmClose = false)}
+  >
+    <div class="modal confirm">
+      <h3>Discard what you filled in?</h3>
+      <p class="confirm-text">
+        The values you typed here haven't been copied or sent yet.
+      </p>
+      <div class="modal-actions">
+        <button class="ghost" onclick={() => (confirmClose = false)}>Keep editing</button>
+        <button class="ghost danger" onclick={onClose}>Discard</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if stepSend}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="ss-backdrop" onclick={() => (stepSend = null)}></div>
@@ -651,6 +696,27 @@
 {/if}
 
 <style>
+  /* Discard confirm — stacks above the fill modal it guards. */
+  .overlay.discard {
+    z-index: 70;
+  }
+  .modal.confirm {
+    max-width: 380px;
+  }
+  .confirm-text {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 4px 0 18px;
+  }
+  .ghost.danger {
+    color: #d98a8a;
+  }
+  .ghost.danger:hover {
+    border-color: #d98a8a;
+    background: color-mix(in srgb, #d98a8a 10%, transparent);
+  }
+
   .stepper {
     display: flex;
     align-items: center;

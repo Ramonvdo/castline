@@ -104,6 +104,53 @@ Two portable JSON files (plus settings) in your OS app-data folder — reachable
 - **Windows:** `%APPDATA%\Castline\`
 - **macOS:** `~/Library/Application Support/Castline/`
 
+## Blueprints → share templates with anyone
+
+A **blueprint** is a small `.json` file describing one or more templates — the same idea as a
+Make.com / n8n scenario blueprint. Export one, send it to someone, and they drop it into their
+Castline. No account, no server, nothing to sign up for.
+
+**Export**
+
+| Where | What you get |
+| --- | --- |
+| Right-click a template → **Export blueprint** | that one template as `<name>.castline.json` |
+| Right-click a template → **Copy as blueprint** | the same JSON on your clipboard — paste it straight into Slack/Discord/email |
+| Select several (Ctrl/Cmd-click) → **Export blueprints** | one file holding the whole selection |
+| Right-click a folder → **Export folder blueprint** | every template in it, plus the folder's name, icon and colour |
+
+**Import** — any of these opens a preview showing what's inside, which `{{variables}}` it expects, and
+a folder to drop it into. Nothing is written until you press Import:
+
+- **Drag the `.json` file anywhere onto the window**
+- The **import button** in the toolbar → *From file…*
+- The same button → *From clipboard* (for a blueprint someone pasted you)
+
+Imported templates always arrive as **copies** with fresh ids, so they can never overwrite something
+you already have. A blueprint carries only what's shareable — names, text, steps, tags. Your ids,
+copy counts, pins and timestamps stay on your machine and are never written into the file.
+
+```json
+{
+  "castline_blueprint": 1,
+  "exported_at": "2026-07-24T14:22:01",
+  "app_version": "1.1.3",
+  "folder": { "name": "Sales", "icon": "mail", "color": "#6fa8c9" },
+  "items": [
+    {
+      "name": "Cold outreach",
+      "kind": "template",
+      "type": "email",
+      "subject": "Quick idea for {{companyName}}",
+      "text": "Hey {{firstName}}, …",
+      "steps": [],
+      "tags": ["sales"]
+    }
+  ],
+  "variables": ["companyName", "firstName"]
+}
+```
+
 ## Connectors → enrich & create profiles (Make / n8n)
 
 Rather than run a server you'd have to expose to the internet, Castline calls **out** to a webhook URL

@@ -391,7 +391,7 @@ pub fn find_folder(data: &LibraryData, folder_id: &str) -> Option<LibFolder> {
 
 /// True for the auto-filled date/time tokens (`{{today}}`, `{{now:HH:mm}}`) —
 /// they're resolved at copy time and are not real profile variables.
-fn is_auto_var(name: &str) -> bool {
+pub(crate) fn is_auto_var(name: &str) -> bool {
     let head = name.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
     head == "today" || head == "now"
 }

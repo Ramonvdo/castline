@@ -7,6 +7,7 @@
   import Agent from "./lib/Agent.svelte";
   import Settings from "./lib/Settings.svelte";
   import FillCopy from "./lib/FillCopy.svelte";
+  import BlueprintImport from "./lib/BlueprintImport.svelte";
   import Icon from "./lib/Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
@@ -102,6 +103,12 @@
   // data-loss notice, so it gets its own dismissable banner — not the ephemeral
   // toast, which any "Copied" would clobber within its window.
   let storeWarn = $state("");
+
+  // A blueprint waiting to be previewed (from a drop, the toolbar, or the clipboard).
+  let pendingBlueprint = $state("");
+  let dragging = $state(false);
+  // Which folder the library is showing, so an import defaults there.
+  let libraryFolderId = $state(null);
   async function drainStoreWarnings() {
     const warns = await storageWarnings();
     if (warns.length) storeWarn = warns.join(" · ");
@@ -145,12 +152,75 @@
       } else if (e.key === "Escape") {
         quickOpen = false;
         profileMenuOpen = false;
-        fillItem = null;
+        pendingBlueprint = "";
+        // NOT fillItem: that modal holds typed values, so it owns its own
+        // Escape handling and asks before discarding them.
       }
     };
     window.addEventListener("keydown", onKey);
+
+    // ── Drop a blueprint file anywhere on the window to import it ──
+    // tauri.conf.json keeps `dragDropEnabled: false` (Tauri's native handler
+    // would swallow the web drag events the library's own card reordering runs
+    // on), so this is plain HTML5 drag & drop. `types` tells the two apart: a
+    // card being dragged carries no files, so it never reaches the import path.
+    const hasFiles = (e) =>
+      !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+    let dragDepth = 0;
+    const onDragEnter = (e) => {
+      if (!hasFiles(e)) return;
+      dragDepth += 1;
+      dragging = true;
+    };
+    const onDragOver = (e) => {
+      // Without this the webview navigates away to the dropped file.
+      if (hasFiles(e)) e.preventDefault();
+    };
+    // No hasFiles() guard here: a leave event that reports no types would
+    // otherwise be skipped and strand the overlay on screen forever.
+    const onDragLeave = () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) dragging = false;
+    };
+    // A drag cancelled with Escape fires neither leave nor drop.
+    const onDragEnd = () => {
+      dragDepth = 0;
+      dragging = false;
+    };
+    const onDrop = async (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      dragging = false;
+      const file = e.dataTransfer.files?.[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith(".json")) {
+        flash("Drop a .json blueprint file");
+        return;
+      }
+      if (file.size > 1_000_000) {
+        flash("That file is too large to be a blueprint");
+        return;
+      }
+      try {
+        pendingBlueprint = await file.text();
+      } catch (err) {
+        flash(String(err));
+      }
+    };
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("dragend", onDragEnd);
+    window.addEventListener("drop", onDrop);
+
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("dragend", onDragEnd);
+      window.removeEventListener("drop", onDrop);
       un();
       unLib();
       unSched();
@@ -299,6 +369,8 @@
         connectors={settings.connectors || []}
         {flash}
         onFill={openFill}
+        onBlueprintText={(t) => (pendingBlueprint = t)}
+        bind:currentFolderId={libraryFolderId}
       />
     {:else if view === "profiles"}
       <Profiles
@@ -379,7 +451,45 @@
   />
 {/if}
 
+{#if pendingBlueprint}
+  <BlueprintImport
+    text={pendingBlueprint}
+    folders={library.folders}
+    defaultFolderId={libraryFolderId || library.folders[0]?.id || null}
+    {flash}
+    onClose={() => (pendingBlueprint = "")}
+    onImported={(d) => (library = d)}
+  />
+{/if}
+
+{#if dragging}
+  <div class="dropzone"><span>Drop a blueprint to import</span></div>
+{/if}
+
 <style>
+  /* Purely a hint — never intercepts the drop itself. */
+  .dropzone {
+    position: fixed;
+    inset: 12px;
+    z-index: 100;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    backdrop-filter: blur(2px);
+  }
+  .dropzone span {
+    background: var(--elevated);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+    border-radius: 999px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: var(--shadow-modal);
+  }
   .shell {
     display: flex;
     flex-direction: column;
