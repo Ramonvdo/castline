@@ -60,14 +60,68 @@ can be sold through your own payment provider while keeping 100%.
 | --- | --- |
 | Category | **Productivity** |
 | Privacy policy URL | **https://castline.dev/privacy/** — required, because the app can make network calls |
-| Website | **https://castline.dev** |
-| Support contact info | **https://github.com/Ramonvdo/castline/issues** |
-| "Functions with limited or no internet connectivity" | **Yes** — Castline is fully usable offline |
-| "Tested to meet accessibility guidelines" | **No** — don't claim this until it's actually been tested |
 | Minimum OS | **Windows 10 version 1809 (10.0.17763.0)** |
 
 The minimum OS **must** match `TargetDeviceFamily MinVersion` in `Package.appxmanifest`. If they
 disagree, the listing offers the app to machines the package refuses to install on.
+
+### Support info (and the DSA question)
+
+| Field | Set it to |
+| --- | --- |
+| Which details | **Use different details for this app** |
+| Website | **https://castline.dev** |
+| Support contact info | **https://github.com/Ramonvdo/castline/issues** |
+| Phone number | **leave blank** (see below) |
+| Address fields | **leave blank** (see below) |
+
+Phone and address aren't marked required on this form, so leave them empty and try to save — a
+website plus a support URL is enough for customers to reach you.
+
+The catch is the **EU Digital Services Act**. A "trader" is anyone acting for purposes relating to
+their trade or profession, and traders must publish an **address, phone number and email** on the
+product page. With a KvK registration behind Castline you very likely count as one, free app or not.
+So:
+
+- Check **Account Settings → Legal info → Developer tab** for your DSA/trader status. If Microsoft
+  has flagged you as a trader, it will demand these details there, and they become **publicly
+  visible on the listing**.
+- If you do have to supply an address, use a **business address, not your home address** — a KvK
+  registered address, a postbus, or a virtual office. For a Dutch eenmanszaak the KvK address is
+  often the home address, and a Store listing broadcasts it far more widely than the KvK register.
+
+### Product declarations
+
+| Declaration | Set it to |
+| --- | --- |
+| Allows purchases without the Microsoft commerce system | **Unchecked** — Castline has no purchases at all |
+| Tested to meet accessibility guidelines | **Unchecked** — it hasn't been tested; Microsoft explicitly warns against claiming this |
+| Install to alternate drives or removable storage | **Leave checked** (default) — no reason to restrict |
+| Include this product's data in automatic OneDrive backups | **Leave checked** (default) — it's the user's own OneDrive and only if they turn backups on, and it protects their library. Uncheck if you'd rather the "nothing leaves your device" promise hold even for the user's own backups. |
+| Record/broadcast clips | **Unchecked** — games only |
+| Supports pen and ink input | **Unchecked** |
+| **Incorporates generative AI features** | **CHECK THIS** ⚠ |
+
+That last one is easy to miss and matters. Castline **does** incorporate generative AI: AI enrich
+generates variable values through OpenRouter, and the Agent tab runs Claude Code. Microsoft's rule
+covers models "accessed via cloud services or APIs" and "provided by third-party AI platforms", so
+bring-your-own-key and opt-in don't exempt it. Declaring it is both accurate and avoids a compliance
+problem later.
+
+### System requirements
+
+**Leave everything unchecked and "Not specified"** — every hardware row (touch, keyboard, mouse,
+camera, NFC, Bluetooth, telephony, microphone, gamepad, Mixed Reality) plus Memory, DirectX, Video
+memory, Processor and Graphics.
+
+Castline is an ordinary desktop app that needs nothing special, and anything listed as a **Minimum**
+requirement makes the Store warn customers whose hardware doesn't report it — and blocks them from
+rating or reviewing. There's no upside to declaring a keyboard.
+
+### Display mode
+
+Leave **PC** and **HoloLens** unchecked. That section is for immersive Windows Mixed Reality
+experiences; Castline is a normal 2D desktop window.
 
 ---
 
