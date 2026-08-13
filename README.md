@@ -136,8 +136,8 @@ Every release also ships `SHA256SUMS.txt`, so you can verify a download is byte-
 built:
 
 ```powershell
-Get-FileHash .\Castline_1.1.3_x64-setup.exe -Algorithm SHA256   # Windows
-shasum -a 256 Castline_1.1.3_universal.dmg                      # macOS
+Get-FileHash .\Castline_x.y.z_x64-setup.exe -Algorithm SHA256   # Windows
+shasum -a 256 Castline_x.y.z_universal.dmg                      # macOS
 ```
 
 ### Build from source
