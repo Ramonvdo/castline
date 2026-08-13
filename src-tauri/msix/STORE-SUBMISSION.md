@@ -164,29 +164,92 @@ experiences; Castline is a normal 2D desktop window.
 > Network access is entirely opt-in: nothing leaves your computer unless you set up a webhook, add
 > your own AI key, or ask the built-in agent to look something up.
 
-**Search terms:** prompt manager · prompt library · AI prompts · text templates · email templates ·
-SOP · snippets · clipboard · productivity · local-first
+**What's new in this version:** **leave blank** — Partner Center says to skip it on a first
+submission. From v1.1.4 onward, put the release highlights here.
 
-**Category:** Productivity
+### Supplemental fields
 
-**Copyright:** © 2026 Ravando
+| Field | Value |
+| --- | --- |
+| Short title | **leave blank** (Xbox-only) |
+| Voice title | **leave blank** (Xbox/Kinect-only) |
+| Short description | see below (≤270 chars) |
 
-**Website:** https://castline.dev
-**Privacy policy:** https://castline.dev/privacy/
-**Support contact:** https://github.com/Ramonvdo/castline/issues
+> Cast it once, paste it anywhere. Keep your AI prompts, email templates and SOPs in one local-first
+> library — fill {{variables}} from reusable profiles and copy in a click. No account, no cloud, no
+> telemetry.
+
+### Additional information
+
+**Keywords** (max 7, ≤40 chars each, ≤21 words total — this set is 12 words):
+
+```
+prompt manager
+AI prompt library
+text templates
+email templates
+snippets
+SOP
+productivity
+```
+
+Deliberately **not** "clipboard" or "clipboard manager" — Castline isn't a clipboard-history tool,
+and that keyword would pull in users looking for something else, who then leave bad reviews.
+
+| Field | Value |
+| --- | --- |
+| Copyright and trademark info | `© 2026 Ravando. Castline is open source under the MIT License.` |
+| Additional license terms | `Castline is free and open-source software licensed under the MIT License: https://github.com/Ramonvdo/castline/blob/main/LICENSE` |
+| Developed by | `Ravando` |
+
+**Category:** Productivity · **Website:** https://castline.dev ·
+**Privacy policy:** https://castline.dev/privacy/ ·
+**Support:** https://github.com/Ramonvdo/castline/issues
+
+---
+
+## 4b. Store logos and art — ✅ GENERATED
+
+`python scripts/store-assets.py logos` builds all of these into `store-assets/`, from `icon.png`
+and the app's own palette, so they match the product exactly:
+
+| Listing slot | File |
+| --- | --- |
+| 9:16 Poster art (720×1080) | `poster-720x1080.png` (also `poster-1440x2160.png`) |
+| 1:1 Box art (1080×1080) | `box-1080x1080.png` (also `box-2160x2160.png`) |
+| Store logo 300×300 | `logo-300.png` |
+| Store logo 150×150 | `logo-150.png` |
+| Store logo 71×71 | `logo-71.png` |
+| 16:9 Super hero art (1920×1080) | `hero-1920x1080.png` |
+
+Poster art is **highly recommended** — it's the main logo customers see on Windows 10/11. The hero
+art deliberately carries **no text**, because Microsoft requires it not to include the product title.
 
 ---
 
 ## 5. Screenshots
 
-The Store wants at least one **1366×768** (or larger, 16:9) screenshot. Capture with the window
-maximised, using the demo library so no personal data is shown:
+At least one is required; **four or five is the sweet spot**. Most people never read the
+description — they swipe the screenshots and decide. So each one should make a single point, with a
+caption that says the benefit rather than naming the UI.
 
-1. **Library** — folders on the left, template cards in the grid
-2. **Fill & copy** — a template with {{variables}} filled from a profile, live preview visible
-3. **Blueprint import** — the preview modal showing what a shared template contains
-4. **Quick find** — the Ctrl+K palette open with results
-5. **SOP steps** — a multi-step SOP mid-walkthrough
+**Capture these five**, window maximised, then save them into `store-assets/raw/` with these exact
+names and run `python scripts/store-assets.py shots`. That composes each onto a branded 1920×1080
+frame with the caption already applied, so the set looks designed rather than like five loose grabs.
+
+| Save as | What to show | Caption applied |
+| --- | --- | --- |
+| `1-library.png` | The library grid: folder rail on the left, a healthy spread of template cards | **Every prompt, template and SOP in one place** — Colour-coded folders. Search, tags, and the ones you use most, first. |
+| `2-fill.png` | Fill & copy open, a profile selected, `{{variables}}` filled, live preview showing the finished text | **Fill {{variables}} from a profile, copy in one click** — Live preview shows exactly what lands on your clipboard. |
+| `3-blueprint.png` | The blueprint import preview, showing the templates and variables a shared file contains | **Share a template as a blueprint** — Export a .json, send it to anyone, import in one step. |
+| `4-quickfind.png` | Ctrl+K palette open, a few letters typed, results listed | **Ctrl+K. Type. Copied.** — Find any template instantly, without leaving the keyboard. |
+| `5-sop.png` | A multi-step SOP mid-walkthrough, on step 2 of 3 | **Walk through multi-step SOPs** — Copy one step at a time, in order, without losing your place. |
+
+If you'd rather word them differently, the captions live in `CAPTIONS` at the top of
+`scripts/store-assets.py` — edit and re-run.
+
+**Order matters.** Partner Center shows them in upload order, so upload 1 → 5. The first screenshot
+is the one that sells; that's why it's the full library rather than a dialog.
 
 > **Never screenshot the Settings tab.** It shows your real Make webhook URL and OpenRouter API key.
 > Nothing in the list above touches it.
@@ -203,6 +266,35 @@ ways round that:
   environment variable (Windows resolves it through a known-folder API), so this means temporarily
   moving `%APPDATA%\Castline` aside and putting it back afterwards. Reversible, but it touches real
   data — ask before doing it.
+
+---
+
+## 5b. Trailer (optional, but it converts)
+
+Not required, and the listing is fine without one. If you do make it, a trailer plays at the top of
+the listing — and it only appears if a **16:9 hero image** is supplied, which
+`hero-1920x1080.png` already covers.
+
+**Rules of thumb:** 20–30 seconds. **Assume it plays muted** — carry everything in on-screen text,
+never narration. Record at 1920×1080/30fps. Move the mouse slowly and deliberately; fast cursor
+movement reads as chaotic at small sizes. Use a clean library with no client names.
+
+**Storyboard**
+
+| Time | On screen | Caption |
+| --- | --- | --- |
+| 0:00–0:04 | The library grid, cursor drifting over cards | *Everything you retype, in one place* |
+| 0:04–0:11 | Open a template, pick a profile, `{{variables}}` fill live, hit Copy, "Copied" toast | *Fill it from a profile. Copy in one click.* |
+| 0:11–0:16 | Press Ctrl+K, type three letters, Enter | *Or just Ctrl+K* |
+| 0:16–0:23 | Right-click → Export blueprint; then drag the .json back in → import preview | *Share a template with anyone* |
+| 0:23–0:30 | Hero art / logo, hold still | *Castline — free, open source, and entirely on your machine* · castline.dev |
+
+Record with **Xbox Game Bar** (`Win+G`), OBS, or ScreenToGif. One continuous take with slow,
+deliberate actions beats five hard cuts — you're demonstrating that the flow is fast, so let the
+speed of the app do the talking rather than the editing.
+
+**Skip it if you're short on time.** Five good captioned screenshots do most of the work; a rushed
+trailer is worse than none.
 
 ---
 

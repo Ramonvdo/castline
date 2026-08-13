@@ -16,6 +16,11 @@ dist-msix/
 *.msixbundle
 *.appx
 
+# Raw screen captures for the Store listing — these come off a real machine and
+# can contain client names, webhook URLs or keys. The composed frames in
+# store-assets/ are safe and committed; the raws are not.
+store-assets/raw/
+
 # Signing material — NEVER commit a certificate or private key
 *.pfx
 *.p12
