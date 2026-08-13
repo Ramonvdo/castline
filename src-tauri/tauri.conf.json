@@ -38,6 +38,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "publisher": "Castline Software",
+    "copyright": "© 2026 Castline Software",
+    "category": "Productivity",
     "shortDescription": "Prompts, templates, notes & SOPs with live {{variables}}.",
     "longDescription": "Castline is a lightweight, local-first desktop library for any reusable text — AI prompts, CLAUDE.md-style notes, message templates and multi-step SOPs. Fill live {{variables}} from reusable profiles and copy with one click.",
     "windows": {

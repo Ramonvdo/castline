@@ -33,10 +33,13 @@ jobs:
             os: macos-latest
             args: --target universal-apple-darwin
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            # --target puts the bundle under a per-target dir; plain builds don't.
+            bundle_dir: universal-apple-darwin/release
           - platform: windows
             os: windows-latest
             args: ""
             rust_targets: x86_64-pc-windows-msvc
+            bundle_dir: release
 
     steps:
       - name: Checkout
@@ -72,7 +75,74 @@ jobs:
             - Windows · `Castline_*_x64-setup.exe`
             - macOS · `Castline_*_universal.dmg`
 
-            The macOS build is unsigned. The first launch may require right-click → Open.
+            **First launch**
+            These builds are not code-signed, so the OS asks once before running them:
+
+            - **Windows** — SmartScreen shows "Windows protected your PC".
+              Click **More info → Run anyway**. For an install with no warning at all,
+              get Castline from the Microsoft Store instead.
+            - **macOS** — Gatekeeper says the developer can't be verified.
+              **Right-click the app → Open**, then confirm.
+
+            Verify your download against `SHA256SUMS.txt` (attached) if you'd like to
+            confirm the file is exactly what CI built.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Lets anyone confirm a download matches what CI produced — the honest
+      # substitute for a signature until the installer is code-signed.
+      - name: Checksums
+        shell: bash
+        run: |
+          cd src-tauri/target/${{ matrix.bundle_dir }}/bundle
+          find . -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' \) -print0 |
+            xargs -0 -r sha256sum > "$RUNNER_TEMP/SHA256SUMS-${{ matrix.platform }}.txt"
+          cat "$RUNNER_TEMP/SHA256SUMS-${{ matrix.platform }}.txt"
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums-${{ matrix.platform }}
+          path: ${{ runner.temp }}/SHA256SUMS-${{ matrix.platform }}.txt
+
+  # ── Microsoft Store package ────────────────────────────────────────────────
+  # Tauri can't emit MSIX, so the Store build is packed separately with the
+  # Windows SDK's makeappx. It is NOT attached to the GitHub release: an MSIX
+  # is only installable once the Store has signed it, so publishing one here
+  # would just hand people a file they can't open. Download it from the run's
+  # artifacts and upload that to Partner Center.
+  msix:
+    name: Build · Microsoft Store (MSIX)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Pack MSIX
+        run: npm run pack:msix
+
+      - name: Upload MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: microsoft-store-msix
+          path: Castline_*_x64.msix
+          if-no-files-found: error

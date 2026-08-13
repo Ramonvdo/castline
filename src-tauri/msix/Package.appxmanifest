@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+  MSIX manifest for the Microsoft Store build.
+
+  Tauri does not generate MSIX, so the Store package is built separately: the
+  release `castline.exe` is staged into a layout folder alongside these assets
+  and packed with makeappx (see `npm run pack:msix`). The Store signs the
+  package on ingestion — no code-signing certificate is needed to submit.
+
+  ─────────────────────────────────────────────────────────────────────────────
+  The Identity values below are DEVELOPMENT defaults, so the package builds and
+  test-installs on this machine out of the box. Partner Center will reject them.
+
+  For a real submission, supply the exact strings from
+  Partner Center > Product > Product identity as environment variables — the
+  pack script substitutes them and never writes them into this file:
+
+    MSIX_IDENTITY_NAME           e.g. 12345Ramonvdo.Castline
+    MSIX_PUBLISHER               e.g. CN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+    MSIX_PUBLISHER_DISPLAY_NAME  e.g. Castline Software
+
+  They must match character-for-character or the upload is rejected.
+  ─────────────────────────────────────────────────────────────────────────────
+-->
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 rescap">
+
+  <Identity
+    Name="Castline.Dev"
+    Publisher="CN=Castline Dev"
+    Version="1.1.3.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Castline</DisplayName>
+    <PublisherDisplayName>Castline Software</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>A local-first library for prompts, templates, notes and SOPs with live {{variables}}.</Description>
+  </Properties>
+
+  <Dependencies>
+    <!-- 17763 = Windows 10 1809, the oldest build Castline is expected to run on. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="Castline" Executable="castline.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Castline"
+        Description="Cast it once, paste it anywhere. Prompts, templates, notes and SOPs with live {{variables}} and reusable profiles."
+        BackgroundColor="#1c2632"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <!-- No Square310x310Logo: Windows then also demands a Wide310x150Logo,
+             which Tauri's icon generator doesn't produce. -->
+        <uap:DefaultTile Square71x71Logo="Assets\Square71x71Logo.png" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <!--
+          "Start with Windows" under MSIX.
+          The packaged build cannot use the Run registry key that
+          tauri-plugin-autostart writes (MSIX virtualizes it), so startup is
+          declared here instead. Enabled="false" means it ships opt-in: the user
+          turns it on from Windows Settings > Apps > Startup.
+        -->
+        <uap5:Extension
+          Category="windows.startupTask"
+          Executable="castline.exe"
+          EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="CastlineStartup" Enabled="false" DisplayName="Castline" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!--
+      Full trust: Castline is a normal desktop app inside the package. It needs
+      this to reach %APPDATA%, talk to webhooks/OpenRouter, and launch the
+      user's own `claude` CLI from the Agent tab.
+    -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

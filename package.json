@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app:dev": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "pack:msix": "node scripts/pack-msix.mjs"
   },
   "license": "MIT",
   "devDependencies": {

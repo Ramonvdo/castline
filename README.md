@@ -77,6 +77,23 @@ Download the latest installer from the [**Releases**](https://github.com/Ramonvd
 - **Windows** — `Castline_x.y.z_x64-setup.exe` (NSIS, installs for the current user)
 - **macOS** — `Castline_x.y.z_universal.dmg`
 
+### "Windows protected your PC" / "unidentified developer"
+
+These builds aren't code-signed, so the OS asks once before running them. Nothing is wrong with
+the download — a signing certificate costs a few hundred euro a year, which a free MIT app doesn't
+carry yet.
+
+- **Windows** — click **More info → Run anyway**.
+- **macOS** — **right-click the app → Open**, then confirm.
+
+Every release also ships `SHA256SUMS.txt`, so you can verify a download is byte-for-byte what CI
+built:
+
+```powershell
+Get-FileHash .\Castline_1.1.3_x64-setup.exe -Algorithm SHA256   # Windows
+shasum -a 256 Castline_1.1.3_universal.dmg                      # macOS
+```
+
 ### Build from source
 Requires [Rust](https://www.rust-lang.org/tools/install), [Node 18+](https://nodejs.org), and the Tauri CLI.
 
@@ -261,7 +278,56 @@ git push origin v1.0.1
 ```
 
 The tag triggers `.github/workflows/release.yml`, which builds Windows + universal-macOS installers and
-attaches them to a **draft** GitHub Release for you to review and publish.
+attaches them to a **draft** GitHub Release for you to review and publish. The same run produces the
+Microsoft Store package as a build **artifact** (`microsoft-store-msix`) — it isn't attached to the
+release, because an MSIX only installs once the Store has signed it.
+
+## Microsoft Store (MSIX)
+
+Tauri only emits `.exe`/`.msi`, and the Store **does not sign those** — a Win32 installer listing
+requires a certificate you already own. An **MSIX**, by contrast, the Store signs for you, so it's the
+one route to a warning-free install at no cost. That's why the Store build is packaged separately:
+
+```bash
+npm run pack:msix            # build + pack  -> Castline_<version>_x64.msix
+npm run pack:msix -- --no-build   # re-pack an existing release binary
+```
+
+`scripts/pack-msix.mjs` stages `castline.exe` plus the Store assets into `dist-msix/`, rewrites the
+manifest version from `tauri.conf.json` (so it can't drift), and packs it with `makeappx` from the
+Windows SDK.
+
+**Submitting.** Partner Center assigns the package identity, so pass it in as environment variables —
+it's never committed:
+
+```bash
+MSIX_IDENTITY_NAME=12345Publisher.Castline \
+MSIX_PUBLISHER='CN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX' \
+MSIX_PUBLISHER_DISPLAY_NAME='Castline Software' \
+npm run pack:msix
+```
+
+Without them the package builds with a development identity (`Castline.Dev`) — installable locally for
+testing, rejected by Partner Center. The script says which mode it used.
+
+**Testing the package locally** needs a self-signed certificate, because Windows won't install an
+unsigned MSIX (the Store's signature is what normally satisfies this):
+
+```powershell
+winget install microsoft.winappcli
+winapp cert generate --if-exists skip
+winapp cert install .\devcert.pfx     # as administrator, once
+Add-AppxPackage .\Castline_1.1.3_x64.msix
+```
+
+**Packaged-build differences.** MSIX runs the app with package identity, so a couple of behaviours
+differ from the `.exe` install and are worth checking after any packaging change:
+
+- **Start with Windows** uses the manifest's `StartupTask` (opt-in via Windows Settings → Apps →
+  Startup) rather than the `Run` registry key, which MSIX virtualizes.
+- **Where your data lives** may be redirected per-package rather than plain `%APPDATA%\Castline`, so a
+  Store install can start with an empty library even if the `.exe` build has one. Export a blueprint
+  or use Settings → Data & backups to move templates across.
 
 ## Project structure
 
