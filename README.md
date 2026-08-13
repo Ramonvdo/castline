@@ -11,9 +11,55 @@ Cast any block of text once, fill it in a second, paste it anywhere.
 [![License: MIT](https://img.shields.io/badge/license-MIT-1f6feb)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Ramonvdo/castline?display_name=tag&color=1f6feb)](https://github.com/Ramonvdo/castline/releases/latest)
 
-![Castline](.github/assets/castline-app.png)
+![Castline](.github/assets/library.png)
 
 </div>
+
+---
+
+<div align="center">
+
+### Fill it from a profile, copy in one click
+
+<img src=".github/assets/fill-and-copy.png" alt="Filling a template's variables from a profile, with a live preview" width="820">
+
+</div>
+
+<table>
+<tr>
+<td width="50%">
+
+**Ctrl+K. Type. Copied.**
+
+<img src=".github/assets/quick-find.png" alt="The Ctrl+K quick-find palette">
+
+</td>
+<td width="50%">
+
+**Share templates as blueprints**
+
+<img src=".github/assets/blueprint-import.png" alt="Dragging a .json blueprint into the window to import it">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**Step through multi-step SOPs**
+
+<img src=".github/assets/sop-steps.png" alt="A multi-step SOP with a hover preview of each step">
+
+</td>
+<td width="50%">
+
+**Everything stays yours**
+
+Plain JSON in your own app-data folder. No account, no cloud, no telemetry — and
+the source is right here to check.
+
+</td>
+</tr>
+</table>
 
 ---
 

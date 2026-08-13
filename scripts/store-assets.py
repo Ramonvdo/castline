@@ -127,8 +127,8 @@ CAPTIONS = {
                   "Colour-coded folders. Search, tags, and the ones you use most, first."),
     "2-fill": ("Fill {{variables}} from a profile, copy in one click",
                "Live preview shows exactly what lands on your clipboard."),
-    "3-blueprint": ("Share a template as a blueprint",
-                    "Export a .json, send it to anyone, import in one step."),
+    "3-blueprint": ("Drag a blueprint in to import it",
+                    "Someone shares a template — drop the .json anywhere in the window."),
     "4-quickfind": ("Ctrl+K. Type. Copied.",
                     "Find any template instantly, without leaving the keyboard."),
     "5-sop": ("Walk through multi-step SOPs",
@@ -146,19 +146,26 @@ def shots():
     W, H = 1920, 1080
     print("Screenshots:")
     for src in sorted(RAW.glob("*.png")):
-        title, sub = CAPTIONS.get(src.stem, (src.stem.replace("-", " ").title(), ""))
+        # Case-insensitive: captures come off Windows, where 5-SOP.png and
+        # 5-sop.png are the same file to a human but not to dict lookup.
+        title, sub = CAPTIONS.get(src.stem.lower(), (src.stem.replace("-", " ").title(), ""))
         img = backdrop(W, H)
         d = ImageDraw.Draw(img)
         centered(d, title, 62, font(52, "semibold"), INK)
         if sub:
             centered(d, sub, 132, font(28), MUTED)
 
-        # Fit the capture into the lower area, preserving aspect.
+        # Fit the capture below the caption. Never scale ABOVE 1.0 — enlarging a
+        # UI screenshot softens the text, which is the one thing that has to stay
+        # legible at Store thumbnail size.
         shot = Image.open(src).convert("RGB")
-        avail_w, avail_h = W - 220, H - 300
-        ratio = min(avail_w / shot.width, avail_h / shot.height)
-        shot = shot.resize((int(shot.width * ratio), int(shot.height * ratio)), Image.LANCZOS)
-        x, y = (W - shot.width) // 2, 215
+        top, bottom = 200, H - 56
+        avail_w, avail_h = W - 160, bottom - top
+        ratio = min(avail_w / shot.width, avail_h / shot.height, 1.0)
+        if ratio < 1.0:
+            shot = shot.resize((int(shot.width * ratio), int(shot.height * ratio)), Image.LANCZOS)
+        x = (W - shot.width) // 2
+        y = top + (avail_h - shot.height) // 2
 
         # Rounded corners + border, matching the app's own card radius.
         mask = Image.new("L", shot.size, 0)

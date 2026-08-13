@@ -227,7 +227,21 @@ art deliberately carries **no text**, because Microsoft requires it not to inclu
 
 ---
 
-## 5. Screenshots
+## 5. Screenshots — ✅ DONE
+
+Composed and ready in `store-assets/`, upload in this order:
+
+1. `screenshot-1-library.png`
+2. `screenshot-2-fill.png`
+3. `screenshot-3-blueprint.png`
+4. `screenshot-4-quickfind.png`
+5. `screenshot-5-SOP.png`
+
+All 1920×1080, captioned, on the brand background. The captures were checked for client names,
+webhook URLs and API keys before composing — they're clean.
+
+<details>
+<summary>How they were made (for the next release)</summary>
 
 At least one is required; **four or five is the sweet spot**. Most people never read the
 description — they swipe the screenshots and decide. So each one should make a single point, with a
@@ -250,6 +264,8 @@ If you'd rather word them differently, the captions live in `CAPTIONS` at the to
 
 **Order matters.** Partner Center shows them in upload order, so upload 1 → 5. The first screenshot
 is the one that sells; that's why it's the full library rather than a dialog.
+
+</details>
 
 > **Never screenshot the Settings tab.** It shows your real Make webhook URL and OpenRouter API key.
 > Nothing in the list above touches it.
