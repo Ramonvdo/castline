@@ -356,15 +356,26 @@ npm run pack:msix
 Without them the package builds with a development identity (`Castline.Dev`) — installable locally for
 testing, rejected by Partner Center. The script says which mode it used.
 
-**Testing the package locally** needs a self-signed certificate, because Windows won't install an
-unsigned MSIX (the Store's signature is what normally satisfies this):
+**Testing the package locally.** Windows refuses to install an unsigned MSIX (`0x800B010A`) — the
+Store's signature is what normally satisfies that, which leaves no way to try the packaged build
+before publishing. Sign a throwaway copy instead:
 
 ```powershell
-winget install microsoft.winappcli
-winapp cert generate --if-exists skip
-winapp cert install .\devcert.pfx     # as administrator, once
-Add-AppxPackage .\Castline_1.1.3_x64.msix
+powershell -ExecutionPolicy Bypass -File scripts\sign-msix-dev.ps1
 ```
+
+It creates a self-signed certificate whose subject matches the manifest's `Publisher` (it has to,
+or Windows rejects the package identity), signs a **copy** so the upload artefact stays pristine,
+and prints two commands to run **as administrator**:
+
+```powershell
+Import-Certificate -FilePath .\devcert.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+Add-AppxPackage .\Castline_1.1.3_x64-dev-signed.msix
+```
+
+The import is once per machine; after that, re-sign and re-run `Add-AppxPackage`. To uninstall:
+`Get-AppxPackage *Castline* | Remove-AppxPackage`. The certificate is disposable and gitignored —
+it has nothing to do with the Store submission.
 
 **Packaged-build differences.** MSIX runs the app with package identity, so a couple of behaviours
 differ from the `.exe` install and are worth checking after any packaging change:

@@ -25,6 +25,7 @@ store-assets/raw/
 *.pfx
 *.p12
 *.key
+*.cer
 devcert*
 
 # Logs & env
