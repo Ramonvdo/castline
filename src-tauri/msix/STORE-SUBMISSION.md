@@ -5,26 +5,33 @@ answers to paste in. Work top to bottom.
 
 ---
 
-## 1. Account and reservation (one-off)
+## 1. Account and reservation — ✅ DONE
 
-1. Create a **free** Partner Center developer account at
-   <https://partner.microsoft.com/dashboard>. Registration fees were removed — individuals
-   since Sept 2025, companies since May 2026.
-   Register as the **KvK company** if you want a verified company publisher name on the listing.
-2. **Apps and games → New product → MSIX or PWA app.**
-   (Not "EXE or MSI app" — that route requires a code-signing certificate you don't have; MSIX is
-   the one the Store signs for you.)
-3. Reserve the name **Castline**. If it's taken, reserve `Castline — Prompt & Template Library`
-   and set the shorter display name in the listing.
-4. Copy the three values from **Product → Product identity** and use them when packaging:
+Partner Center product is reserved. Identity is baked into `Package.appxmanifest`:
 
-   ```
-   MSIX_IDENTITY_NAME=<Package/Identity/Name>
-   MSIX_PUBLISHER=<Package/Identity/Publisher>          # looks like CN=XXXXXXXX-XXXX-…
-   MSIX_PUBLISHER_DISPLAY_NAME=<Package/Properties/PublisherDisplayName>
-   ```
+| Field | Value |
+| --- | --- |
+| Package/Identity/Name | `Ravando.Castline` |
+| Package/Identity/Publisher | `CN=0FDF4166-D594-445A-AC0D-659012821ABB` |
+| Package/Properties/PublisherDisplayName | `Ravando` |
+| Package Family Name | `Ravando.Castline_36ex7sfbaqfcj` |
+| Store ID | `9NVJX06SSMTH` |
 
-5. Build the package with those set (see README → Microsoft Store) and upload the `.msix`.
+The PFN suffix is a hash of the Publisher string, and the committed value reproduces
+`36ex7sfbaqfcj` exactly — so the identity is verified correct, not just copied.
+
+## 1b. Build and upload the package
+
+```bash
+npm run pack:msix        # -> Castline_<version>_x64.msix
+```
+
+It prints the identity it packed; confirm it says `Ravando.Castline` before uploading. Then in
+Partner Center: **Submission → Packages → upload the .msix**. The Store signs it — you do not need a
+certificate.
+
+Each later submission needs a **higher** version. Bump the app version (README → Cutting a release)
+and the manifest version follows automatically.
 
 ---
 
@@ -72,7 +79,7 @@ SOP · snippets · clipboard · productivity · local-first
 
 **Category:** Productivity
 
-**Copyright:** © 2026 Castline Software
+**Copyright:** © 2026 Ravando
 
 **Website:** https://castline.dev
 **Privacy policy:** https://castline.dev/privacy

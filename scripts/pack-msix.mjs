@@ -111,14 +111,15 @@ if (publisherDisplay) {
   );
 }
 
-const forStore = identityName && publisher && publisherDisplay;
+// Report the identity actually written, so a wrong package is obvious before
+// it's uploaded rather than after Partner Center rejects it.
+const packedName = manifest.match(/<Identity[\s\S]*?Name="([^"]*)"/)?.[1] ?? "?";
+const packedPublisher = manifest.match(/<Identity[\s\S]*?Publisher="([^"]*)"/)?.[1] ?? "?";
+console.log(`  identity  ${packedName}`);
+console.log(`  publisher ${packedPublisher}`);
+const forStore = !/\bdev\b/i.test(packedName);
 if (!forStore) {
-  console.warn(
-    "\n⚠ Building with DEVELOPMENT identity (Castline.Dev).\n" +
-      "  Fine for local test-installs; Partner Center will reject it.\n" +
-      "  For a submission, set MSIX_IDENTITY_NAME, MSIX_PUBLISHER and\n" +
-      "  MSIX_PUBLISHER_DISPLAY_NAME from Partner Center > Product identity.\n",
-  );
+  console.warn("\n⚠ Development identity — installable locally, rejected by Partner Center.\n");
 }
 writeFileSync(join(layout, "AppxManifest.xml"), manifest);
 

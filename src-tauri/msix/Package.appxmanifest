@@ -9,18 +9,17 @@
   package on ingestion — no code-signing certificate is needed to submit.
 
   ─────────────────────────────────────────────────────────────────────────────
-  The Identity values below are DEVELOPMENT defaults, so the package builds and
-  test-installs on this machine out of the box. Partner Center will reject them.
+  The Identity values below are the real ones from
+  Partner Center > Product > Product identity (Store ID 9NVJX06SSMTH). They are
+  not secrets — they are visible in every installed copy of the package — and
+  they must match Partner Center character-for-character or the upload is
+  rejected, so they live here rather than in someone's shell history.
 
-  For a real submission, supply the exact strings from
-  Partner Center > Product > Product identity as environment variables — the
-  pack script substitutes them and never writes them into this file:
+  Expected Package Family Name: Ravando.Castline_36ex7sfbaqfcj
+  (the suffix is a hash of the Publisher string, so it double-checks that value)
 
-    MSIX_IDENTITY_NAME           e.g. 12345Ramonvdo.Castline
-    MSIX_PUBLISHER               e.g. CN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-    MSIX_PUBLISHER_DISPLAY_NAME  e.g. Castline Software
-
-  They must match character-for-character or the upload is rejected.
+  MSIX_IDENTITY_NAME / MSIX_PUBLISHER / MSIX_PUBLISHER_DISPLAY_NAME still
+  override these at pack time if a second listing is ever needed.
   ─────────────────────────────────────────────────────────────────────────────
 -->
 
@@ -32,14 +31,14 @@
   IgnorableNamespaces="uap uap5 rescap">
 
   <Identity
-    Name="Castline.Dev"
-    Publisher="CN=Castline Dev"
+    Name="Ravando.Castline"
+    Publisher="CN=0FDF4166-D594-445A-AC0D-659012821ABB"
     Version="1.1.3.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>Castline</DisplayName>
-    <PublisherDisplayName>Castline Software</PublisherDisplayName>
+    <PublisherDisplayName>Ravando</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <Description>A local-first library for prompts, templates, notes and SOPs with live {{variables}}.</Description>
   </Properties>
