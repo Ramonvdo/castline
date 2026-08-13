@@ -14,6 +14,7 @@
     setSchedules,
     runScheduleNow,
     setAutostart,
+    autostartStatus,
     pickDirectory,
     getSettings,
     getProfiles,
@@ -93,12 +94,32 @@
   let llmTone = $state("");
 
   // ── Startup & tray ──
+  // A Store (MSIX) install can't use the Run key: Windows virtualizes that write
+  // into the package, so it silently does nothing. Packaged builds go through the
+  // manifest's StartupTask instead — and Windows lets the user veto it, after
+  // which the app isn't allowed to switch it back on. `locked` says so out loud
+  // rather than leaving a toggle that quietly refuses to move.
   let autostart = $state(true);
+  let autoManaged = $state(false);
+  let autoLocked = $state(false);
+
+  async function refreshAutostart() {
+    const st = await autostartStatus();
+    autostart = !!st.enabled;
+    autoManaged = !!st.managed;
+    autoLocked = !!st.locked;
+  }
+
   async function toggleAutostart() {
-    const s = await setAutostart(!autostart);
-    autostart = !!s.autostart;
+    const want = !autostart;
+    const s = await setAutostart(want);
     onSettings(s);
-    flash(autostart ? "Castline starts with Windows" : "Autostart off");
+    await refreshAutostart();
+    if (autostart === want) {
+      flash(autostart ? "Castline starts with Windows" : "Autostart off");
+    } else {
+      flash("Windows is blocking this — change it in Startup apps");
+    }
   }
 
   // ── Scheduled jobs ──
@@ -131,7 +152,7 @@
   onMount(async () => {
     dataDir = await getDataDir();
     const s = await getSettings();
-    autostart = s.autostart !== false;
+    await refreshAutostart();
     llmKey = s.llm?.api_key || "";
     llmModel = s.llm?.model || "google/gemini-2.5-flash";
     llmWeb = !!s.llm?.web_search;
@@ -353,8 +374,25 @@
 
   <section class="panel">
     <label class="checkrow">
-      <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
-      <span><strong>Enable auto-start on PC startup</strong></span>
+      <input
+        type="checkbox"
+        checked={autostart}
+        disabled={autoLocked}
+        onchange={toggleAutostart}
+      />
+      <span>
+        <strong>Enable auto-start on PC startup</strong>
+        {#if autoLocked}
+          <em class="startup-note">
+            Turned off in Windows. Re-enable it under Settings → Apps → Startup —
+            Windows doesn't let an app undo that itself.
+          </em>
+        {:else if autoManaged}
+          <em class="startup-note">
+            Managed by Windows for Store installs; also visible under Settings → Apps → Startup.
+          </em>
+        {/if}
+      </span>
     </label>
   </section>
 
@@ -706,6 +744,14 @@
     color: var(--faint);
   }
   .hint code,
+  .startup-note {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+    font-style: normal;
+    line-height: 1.5;
+    color: var(--muted);
+  }
   .checkrow code {
     font-family: var(--font-mono);
     font-size: 12px;

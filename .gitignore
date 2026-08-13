@@ -36,6 +36,10 @@ devcert*
 
 # Personal / private notes (never commit — this repo is public)
 future-steps.md
+# Store submission notes: listing copy, Partner Center identity, packaging runbook.
+STORE-NOTES.md
+# Generated Store artwork + composed listing screenshots (regenerate with scripts/store-assets.py).
+store-assets/
 
 # Editor / OS
 .DS_Store

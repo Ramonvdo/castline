@@ -324,67 +324,7 @@ git push origin v1.0.1
 ```
 
 The tag triggers `.github/workflows/release.yml`, which builds Windows + universal-macOS installers and
-attaches them to a **draft** GitHub Release for you to review and publish. The same run produces the
-Microsoft Store package as a build **artifact** (`microsoft-store-msix`) — it isn't attached to the
-release, because an MSIX only installs once the Store has signed it.
-
-## Microsoft Store (MSIX)
-
-Tauri only emits `.exe`/`.msi`, and the Store **does not sign those** — a Win32 installer listing
-requires a certificate you already own. An **MSIX**, by contrast, the Store signs for you, so it's the
-one route to a warning-free install at no cost. That's why the Store build is packaged separately:
-
-```bash
-npm run pack:msix            # build + pack  -> Castline_<version>_x64.msix
-npm run pack:msix -- --no-build   # re-pack an existing release binary
-```
-
-`scripts/pack-msix.mjs` stages `castline.exe` plus the Store assets into `dist-msix/`, rewrites the
-manifest version from `tauri.conf.json` (so it can't drift), and packs it with `makeappx` from the
-Windows SDK.
-
-**Submitting.** Partner Center assigns the package identity, so pass it in as environment variables —
-it's never committed:
-
-```bash
-MSIX_IDENTITY_NAME=12345Publisher.Castline \
-MSIX_PUBLISHER='CN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX' \
-MSIX_PUBLISHER_DISPLAY_NAME='Castline Software' \
-npm run pack:msix
-```
-
-Without them the package builds with a development identity (`Castline.Dev`) — installable locally for
-testing, rejected by Partner Center. The script says which mode it used.
-
-**Testing the package locally.** Windows refuses to install an unsigned MSIX (`0x800B010A`) — the
-Store's signature is what normally satisfies that, which leaves no way to try the packaged build
-before publishing. Sign a throwaway copy instead:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\sign-msix-dev.ps1
-```
-
-It creates a self-signed certificate whose subject matches the manifest's `Publisher` (it has to,
-or Windows rejects the package identity), signs a **copy** so the upload artefact stays pristine,
-and prints two commands to run **as administrator**:
-
-```powershell
-Import-Certificate -FilePath .\devcert.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
-Add-AppxPackage .\Castline_1.1.3_x64-dev-signed.msix
-```
-
-The import is once per machine; after that, re-sign and re-run `Add-AppxPackage`. To uninstall:
-`Get-AppxPackage *Castline* | Remove-AppxPackage`. The certificate is disposable and gitignored —
-it has nothing to do with the Store submission.
-
-**Packaged-build differences.** MSIX runs the app with package identity, so a couple of behaviours
-differ from the `.exe` install and are worth checking after any packaging change:
-
-- **Start with Windows** uses the manifest's `StartupTask` (opt-in via Windows Settings → Apps →
-  Startup) rather than the `Run` registry key, which MSIX virtualizes.
-- **Where your data lives** may be redirected per-package rather than plain `%APPDATA%\Castline`, so a
-  Store install can start with an empty library even if the `.exe` build has one. Export a blueprint
-  or use Settings → Data & backups to move templates across.
+attaches them to a **draft** GitHub Release for you to review and publish.
 
 ## Project structure
 

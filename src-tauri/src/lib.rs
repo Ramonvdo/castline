@@ -2,6 +2,7 @@
 
 mod blueprint;
 mod library;
+mod startup;
 mod profiles;
 mod settings;
 mod connectors;
@@ -396,14 +397,30 @@ fn apply_autostart(app: &AppHandle, enabled: bool) {
 
 #[tauri::command]
 fn set_autostart(app: AppHandle, enabled: bool) -> AppSettings {
+    // On a packaged (Store) build Windows owns this, and it may refuse — so the
+    // saved value follows what actually happened, never what was asked for.
+    let effective = match startup::set(enabled) {
+        Some(status) => status.enabled,
+        None => {
+            apply_autostart(&app, enabled);
+            enabled
+        }
+    };
     let state = app.state::<SettingsState>();
     {
         let mut s = state.data.lock().unwrap();
-        s.autostart = enabled;
+        s.autostart = effective;
     }
     state.save();
-    apply_autostart(&app, enabled);
     state.snapshot()
+}
+
+/// Real startup state, so Settings can show the truth rather than the last thing
+/// that was clicked.
+#[tauri::command]
+fn autostart_status(app: AppHandle) -> startup::Status {
+    let saved = app.state::<SettingsState>().data.lock().unwrap().autostart;
+    startup::status(saved)
 }
 
 /// Fire one schedule immediately (the "Run now" button).
@@ -1012,6 +1029,7 @@ pub fn run() {
             set_schedules,
             run_schedule_now,
             set_autostart,
+            autostart_status,
             read_text_file,
             clip_copy,
             clip_read,

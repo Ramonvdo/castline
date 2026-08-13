@@ -77,6 +77,9 @@ export const runScheduleNow = (id) => invoke("run_schedule_now", { id });
 
 // ── Startup & tray ──
 export const setAutostart = (enabled) => invoke("set_autostart", { enabled });
+// Real startup state: { managed, enabled, locked }. `managed` = a Store/MSIX
+// install, where Windows owns the setting and may refuse to change it.
+export const autostartStatus = () => invoke("autostart_status");
 
 // ── Import / export / reveal ──
 export const getDataDir = () => invoke("get_data_dir");

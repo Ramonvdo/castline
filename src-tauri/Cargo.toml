@@ -46,6 +46,12 @@ tiny_http = "0.12"
 portable-pty = "0.9"
 notify = "6"
 
+# Store (MSIX) builds can't use the Run key the autostart plugin writes — Windows
+# virtualizes it into the package, so nothing launches. Packaged builds drive the
+# StartupTask declared in Package.appxmanifest instead.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["ApplicationModel", "Foundation"] }
+
 [dev-dependencies]
 tempfile = "3"
 
