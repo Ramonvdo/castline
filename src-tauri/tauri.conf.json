@@ -41,7 +41,7 @@
     "publisher": "Ravando",
     "copyright": "© 2026 Ravando",
     "category": "Productivity",
-    "shortDescription": "Prompts, templates, notes & SOPs with live {{variables}}.",
+    "shortDescription": "A local template library for any text you reuse frequently: AI prompts, email templates, notes and multi-step SOPs.",
     "longDescription": "Castline is a lightweight, local-first desktop library for any reusable text — AI prompts, CLAUDE.md-style notes, message templates and multi-step SOPs. Fill live {{variables}} from reusable profiles and copy with one click.",
     "windows": {
       "nsis": {

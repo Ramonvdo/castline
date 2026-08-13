@@ -175,9 +175,8 @@ submission. From v1.1.4 onward, put the release highlights here.
 | Voice title | **leave blank** (Xbox/Kinect-only) |
 | Short description | see below (≤270 chars) |
 
-> Cast it once, paste it anywhere. Keep your AI prompts, email templates and SOPs in one local-first
-> library — fill {{variables}} from reusable profiles and copy in a click. No account, no cloud, no
-> telemetry.
+> A local template library for any text you reuse frequently: AI prompts, email templates, notes and
+> multi-step SOPs.
 
 ### Additional information
 

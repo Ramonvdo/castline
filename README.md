@@ -2,7 +2,7 @@
 
 # Castline
 
-**A lightweight, local-first library for prompts, templates, notes & SOPs — with live `{{variables}}` and reusable profiles.**
+**A local template library for any text you reuse frequently: AI prompts, email templates, notes and multi-step SOPs.**
 
 Cast any block of text once, fill it in a second, paste it anywhere.
 
