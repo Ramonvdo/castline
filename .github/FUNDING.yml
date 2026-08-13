@@ -1,0 +1,10 @@
+# Shows a "Sponsor" button on the repo. Castline stays free and MIT — this is a
+# tip jar for people who want to support it, not a paywall.
+#
+# `github:` only works once GitHub Sponsors is enabled on the account
+# (Settings > Sponsors — needs identity + bank details). Until then the button
+# simply doesn't appear. Uncomment a line below to add another option.
+github: Ramonvdo
+# ko_fi: your-handle
+# buy_me_a_coffee: your-handle
+# custom: ["https://castline.dev"]

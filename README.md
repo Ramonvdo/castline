@@ -352,6 +352,12 @@ castline/
 Tauri v2 · Rust · Svelte 5 + Vite · plain JSON storage · `ureq` (outbound) + `tiny_http` (inbound) ·
 `portable-pty` + `xterm.js` for the embedded agent.
 
+## Support the project
+
+Castline is free and MIT-licensed, and stays that way. If it saves you time and you'd like to chip
+in, you can [**sponsor the project**](https://github.com/sponsors/Ramonvdo) — entirely optional, and
+nothing in the app is ever gated behind it.
+
 ## License
 
 [MIT](LICENSE) © Castline contributors

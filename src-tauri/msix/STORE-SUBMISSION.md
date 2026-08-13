@@ -35,7 +35,43 @@ and the manifest version follows automatically.
 
 ---
 
-## 2. Listing copy
+## 2. Pricing and availability
+
+Castline is listed **free**. That keeps the Store consistent with castline.dev ("Free without
+limits"), avoids Microsoft's 15% cut, and — the practical part — means **no payout account and no
+US tax forms (W-8BEN)** are needed before submitting. Money comes later from Castline Cloud, which
+can be sold through your own payment provider while keeping 100%.
+
+| Field | Set it to |
+| --- | --- |
+| **Base price** | **Free** ← this clears the "No PriceSchedule created for purchasable product" error |
+| Markets | **All worldwide markets** (240) — leave "make my product available in any future market" ticked |
+| Audience | **Public audience** |
+| Discoverability | **Make this product available and discoverable in the Microsoft Store** |
+| Schedule → Release | **as soon as possible** |
+| Schedule → Stop acquisition | **never** |
+| Free trial | none (not applicable to a free app) |
+| Sale pricing | none |
+| Organizational licensing | leave the default — volume acquisition allowed, offline licensing off. Lets companies deploy Castline without extra work on your side. |
+
+## 3. Properties
+
+| Field | Set it to |
+| --- | --- |
+| Category | **Productivity** |
+| Privacy policy URL | **https://castline.dev/privacy/** — required, because the app can make network calls |
+| Website | **https://castline.dev** |
+| Support contact info | **https://github.com/Ramonvdo/castline/issues** |
+| "Functions with limited or no internet connectivity" | **Yes** — Castline is fully usable offline |
+| "Tested to meet accessibility guidelines" | **No** — don't claim this until it's actually been tested |
+| Minimum OS | **Windows 10 version 1809 (10.0.17763.0)** |
+
+The minimum OS **must** match `TargetDeviceFamily MinVersion` in `Package.appxmanifest`. If they
+disagree, the listing offers the app to machines the package refuses to install on.
+
+---
+
+## 4. Listing copy
 
 **Name:** Castline
 
@@ -82,14 +118,14 @@ SOP · snippets · clipboard · productivity · local-first
 **Copyright:** © 2026 Ravando
 
 **Website:** https://castline.dev
-**Privacy policy:** https://castline.dev/privacy
+**Privacy policy:** https://castline.dev/privacy/
 **Support contact:** https://github.com/Ramonvdo/castline/issues
 
 ---
 
-## 3. Screenshots
+## 5. Screenshots
 
-The Store wants at least one 1366×768 (or larger, 16:9) screenshot. Capture with the window
+The Store wants at least one **1366×768** (or larger, 16:9) screenshot. Capture with the window
 maximised, using the demo library so no personal data is shown:
 
 1. **Library** — folders on the left, template cards in the grid
@@ -98,9 +134,25 @@ maximised, using the demo library so no personal data is shown:
 4. **Quick find** — the Ctrl+K palette open with results
 5. **SOP steps** — a multi-step SOP mid-walkthrough
 
+> **Never screenshot the Settings tab.** It shows your real Make webhook URL and OpenRouter API key.
+> Nothing in the list above touches it.
+
+**Your live library is your real one** — client names, case studies, "Operation Apex" and so on —
+so straight screenshots of it would publish your actual work to a public Store listing. Two clean
+ways round that:
+
+- **Curate as you shoot.** Open a folder with nothing client-specific in it (Copywriting or Claude
+  Code work well), or briefly rename anything identifying. Grab the five shots with `Win+Shift+S`
+  at a maximised window, which is comfortably over 1366×768 on your display.
+- **Shoot a fresh instance.** Castline seeds a small example library when it starts with no data,
+  which makes for clean, generic screenshots. The data folder can't be redirected with an
+  environment variable (Windows resolves it through a known-folder API), so this means temporarily
+  moving `%APPDATA%\Castline` aside and putting it back afterwards. Reversible, but it touches real
+  data — ask before doing it.
+
 ---
 
-## 4. Age rating and questionnaire answers
+## 6. Age rating and questionnaire answers
 
 Run the Store's rating questionnaire with these answers:
 
@@ -113,23 +165,42 @@ Run the Store's rating questionnaire with these answers:
 | User-generated content shared between users? | **No** — blueprints are files the user chooses to share themselves |
 | Target age | **General audiences** (expected rating: PEGI 3 / ESRB Everyone) |
 
-**Note for the certification reviewer** (paste in "Notes for certification"):
+---
 
-> Castline is a local-first text-template manager. All data is stored in plain JSON in the user's
-> app-data folder; there is no account, sign-in, telemetry or analytics.
+## 7. Submission options
+
+| Field | Set it to |
+| --- | --- |
+| Publishing hold options | **Publish this submission as soon as it passes certification** |
+| Notes for certification | paste the block below |
+
+The notes matter more than usual here: the package declares **`runFullTrust`**, a restricted
+capability, and reviewers routinely ask why. This answers it up front.
+
+> Castline is a local-first text-template manager, packaged as a full-trust Win32 desktop app
+> (Tauri/Rust). All data is stored as plain JSON in the user's app-data folder. There is no account,
+> sign-in, telemetry or analytics of any kind.
 >
-> Network access is optional and user-initiated:
-> • The user may paste their own Make/n8n webhook URL to send a filled template.
-> • The user may add their own OpenRouter API key to fill template variables with AI.
-> • The Agent tab launches the user's own locally-installed Claude Code CLI, if present.
-> • The app checks GitHub for release updates.
+> **Why runFullTrust is required:** the app is a conventional desktop application inside the package.
+> It reads and writes its own JSON library in %APPDATA%, lets the user save and open template files
+> anywhere on disk, and can launch the user's own locally-installed Claude Code CLI as a child
+> process from the Agent tab.
 >
-> None of these are enabled by default and the app is fully functional offline. Source code:
+> **Network use is optional and always user-initiated:**
+> • The user may paste their own Make/n8n webhook URL to send a filled template to their automation.
+> • The user may add their own OpenRouter API key to fill template variables using AI.
+> • The Agent tab runs the user's own Claude Code CLI, only if they installed it themselves.
+> • The app checks the public GitHub releases API for update notifications.
+> • An optional local HTTP endpoint (disabled by default, 127.0.0.1 only, token-protected) lets the
+>   user's own automations write data in.
+>
+> None of these are enabled by default and the app is fully functional with no network connection.
+> Castline is free and open source under the MIT licence; the complete source for this build is at
 > https://github.com/Ramonvdo/castline
 
 ---
 
-## 5. After it's live
+## 8. After it's live
 
 - Add the Store badge/link to castline.dev and the README as the warning-free Windows option.
 - Keep the `.exe` on GitHub for people who prefer a plain installer.
