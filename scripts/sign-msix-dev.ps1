@@ -11,9 +11,16 @@
 
   Nothing here goes near the Store. The dev certificate is local, disposable, and gitignored.
 
+.PARAMETER Install
+  Also trust the certificate and install the package. Trusting needs administrator rights, so this
+  triggers a single UAC prompt; the install itself runs unelevated as the current user.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\sign-msix-dev.ps1
+  powershell -ExecutionPolicy Bypass -File scripts\sign-msix-dev.ps1 -Install
 #>
+
+param([switch]$Install)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
@@ -58,12 +65,40 @@ if ($LASTEXITCODE -ne 0) { throw "signtool failed" }
 
 Write-Host ""
 Write-Host "Signed: $signed" -ForegroundColor Green
-Write-Host ""
-Write-Host "To install, run these TWO commands in an ADMIN PowerShell:" -ForegroundColor Yellow
-Write-Host "  Import-Certificate -FilePath `"$cer`" -CertStoreLocation Cert:\LocalMachine\TrustedPeople"
-Write-Host "  Add-AppxPackage `"$signed`""
-Write-Host ""
-Write-Host "The first command only has to be run once. Afterwards, re-signing and"
-Write-Host "re-running Add-AppxPackage is enough."
-Write-Host ""
-Write-Host "To remove it again:  Get-AppxPackage *Castline* | Remove-AppxPackage"
+
+# The certificate is self-signed, so it is its own root. Windows checks that the
+# chain ENDS in a trusted root - putting the leaf in TrustedPeople is not enough
+# and still fails with 0x800B0109. It has to go into Trusted Root.
+$trusted = Get-ChildItem Cert:\LocalMachine\Root -EA SilentlyContinue |
+           Where-Object { $_.Thumbprint -eq $cert.Thumbprint }
+
+if ($Install) {
+    if (-not $trusted) {
+        Write-Host ""
+        Write-Host "Trusting the certificate (approve the UAC prompt)..." -ForegroundColor Yellow
+        $inner = "Import-Certificate -FilePath '$cer' -CertStoreLocation Cert:\LocalMachine\Root | Out-Null"
+        $p = Start-Process powershell -Verb RunAs -Wait -PassThru `
+             -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $inner
+        if ($p.ExitCode -ne 0) { throw "Trusting the certificate failed (exit $($p.ExitCode))." }
+    }
+    Write-Host "Installing..." -ForegroundColor Yellow
+    Add-AppxPackage $signed
+    Write-Host ""
+    Write-Host "Installed. Launch Castline from the Start menu." -ForegroundColor Green
+    Write-Host "Remove with:  Get-AppxPackage *Castline* | Remove-AppxPackage"
+} else {
+    Write-Host ""
+    if ($trusted) {
+        Write-Host "Certificate is already trusted. Install with:" -ForegroundColor Yellow
+        Write-Host "  Add-AppxPackage `"$signed`""
+    } else {
+        Write-Host "Re-run with -Install to trust the certificate and install in one step:" -ForegroundColor Yellow
+        Write-Host "  powershell -ExecutionPolicy Bypass -File scripts\sign-msix-dev.ps1 -Install"
+        Write-Host ""
+        Write-Host "Or do it by hand in an ADMIN PowerShell:"
+        Write-Host "  Import-Certificate -FilePath `"$cer`" -CertStoreLocation Cert:\LocalMachine\Root"
+        Write-Host "  Add-AppxPackage `"$signed`""
+    }
+    Write-Host ""
+    Write-Host "Remove with:  Get-AppxPackage *Castline* | Remove-AppxPackage"
+}
