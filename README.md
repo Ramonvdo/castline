@@ -11,6 +11,8 @@ Cast any block of text once, fill it in a second, paste it anywhere.
 [![License: MIT](https://img.shields.io/badge/license-MIT-1f6feb)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Ramonvdo/castline?display_name=tag&color=1f6feb)](https://github.com/Ramonvdo/castline/releases/latest)
 
+[**Get it from the Microsoft Store**](https://apps.microsoft.com/detail/9NVJX06SSMTH) · [Direct download](https://github.com/Ramonvdo/castline/releases/latest) · [castline.dev](https://castline.dev)
+
 ![Castline](.github/assets/library.png)
 
 </div>
@@ -117,17 +119,24 @@ It's **local-first** (plain JSON files on your machine — no account, no cloud,
 
 ## Install
 
-### Prebuilt (recommended)
-Download the latest installer from the [**Releases**](https://github.com/Ramonvdo/castline/releases/latest) page:
+### Windows — Microsoft Store (recommended)
+
+[**Get Castline from the Microsoft Store**](https://apps.microsoft.com/detail/9NVJX06SSMTH)
+
+Microsoft signs the Store package, so it installs with no security warning and updates itself.
+
+### Direct download
+
+From the [**Releases**](https://github.com/Ramonvdo/castline/releases/latest) page:
 
 - **Windows** — `Castline_x.y.z_x64-setup.exe` (NSIS, installs for the current user)
 - **macOS** — `Castline_x.y.z_universal.dmg`
 
 ### "Windows protected your PC" / "unidentified developer"
 
-These builds aren't code-signed, so the OS asks once before running them. Nothing is wrong with
-the download — a signing certificate costs a few hundred euro a year, which a free MIT app doesn't
-carry yet.
+The direct downloads aren't code-signed, so the OS asks once before running them. Nothing is wrong
+with the download — a signing certificate costs a few hundred euro a year, which a free MIT app
+doesn't carry yet. On Windows, the Store build above avoids this entirely.
 
 - **Windows** — click **More info → Run anyway**.
 - **macOS** — **right-click the app → Open**, then confirm.
