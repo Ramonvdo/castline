@@ -39,20 +39,113 @@ impl Default for AiState {
     }
 }
 
-/// Resolve how to launch claude: `(program, leading_args)`. An explicit
-/// configured path wins; otherwise probe the PATH. On Windows, prefer a real
-/// `.exe` (native installer) over the npm `.cmd` shim, and route shims through
-/// `cmd.exe /c` (CreateProcess can't exec .cmd/.bat directly).
-pub fn resolve_claude(cfg: &crate::settings::AiConfig) -> Option<(String, Vec<String>)> {
+/// How `claude` was located. Surfaced in `ai_status` so a user whose Agent tab
+/// says "not found" can tell a missing install from a PATH problem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// An explicit path set in Settings.
+    Configured,
+    /// Found on the PATH this process inherited.
+    Path,
+    /// Found by checking known install locations directly.
+    Probe,
+}
+
+impl Source {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Configured => "configured",
+            Source::Path => "path",
+            Source::Probe => "probe",
+        }
+    }
+}
+
+/// A launchable claude: what to exec, its leading args, the file actually found
+/// (before any shim wrapping), and how it was found.
+pub struct Resolved {
+    pub program: String,
+    pub args: Vec<String>,
+    pub found: String,
+    pub source: Source,
+}
+
+/// Resolve how to launch claude. An explicit configured path wins, then the
+/// inherited PATH, then a direct sweep of the locations the common installers
+/// use.
+///
+/// That last fallback is not belt-and-braces: a packaged (MSIX/Store) build is
+/// activated by the shell broker and can inherit a PATH without the user's own
+/// additions, so `where.exe` finds nothing on a machine where claude is plainly
+/// installed — the app then reports "not found" and looks broken.
+pub fn resolve_claude(cfg: &crate::settings::AiConfig) -> Option<Resolved> {
     let explicit = cfg.claude_path.trim();
     if !explicit.is_empty() {
-        return Some(wrap_shim(explicit));
+        let (program, args) = wrap_shim(explicit);
+        return Some(Resolved {
+            program,
+            args,
+            found: explicit.to_string(),
+            source: Source::Configured,
+        });
     }
-    which_claude()
+    let (found, source) = match which_claude() {
+        Some(p) => (p, Source::Path),
+        None => (probe_claude()?, Source::Probe),
+    };
+    let (program, args) = wrap_shim(&found);
+    Some(Resolved { program, args, found, source })
+}
+
+/// The locations the common installers drop `claude` into, in preference order.
+/// Public so `ai_status` can report each one's hit/miss as diagnostics.
+pub fn probe_candidates() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let home = dirs::home_dir();
+
+    #[cfg(windows)]
+    {
+        // Native installer first — a real .exe beats a shim.
+        if let Some(h) = &home {
+            out.push(h.join(".local").join("bin").join("claude.exe"));
+            out.push(h.join(".bun").join("bin").join("claude.exe"));
+        }
+        if let Some(local) = dirs::data_local_dir() {
+            out.push(local.join("Programs").join("claude").join("claude.exe"));
+            out.push(local.join("pnpm").join("claude.cmd"));
+            out.push(local.join("Yarn").join("bin").join("claude.cmd"));
+        }
+        // npm global shim.
+        if let Some(roaming) = dirs::data_dir() {
+            out.push(roaming.join("npm").join("claude.cmd"));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Some(h) = &home {
+            out.push(h.join(".local").join("bin").join("claude"));
+            out.push(h.join(".bun").join("bin").join("claude"));
+            out.push(h.join(".npm-global").join("bin").join("claude"));
+        }
+        out.push(std::path::PathBuf::from("/usr/local/bin/claude"));
+        out.push(std::path::PathBuf::from("/opt/homebrew/bin/claude"));
+    }
+
+    let _ = &home;
+    out
+}
+
+/// First candidate that actually exists on disk.
+fn probe_claude() -> Option<String> {
+    probe_candidates()
+        .into_iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 #[cfg(windows)]
-fn which_claude() -> Option<(String, Vec<String>)> {
+fn which_claude() -> Option<String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let out = std::process::Command::new("where.exe")
@@ -72,23 +165,23 @@ fn which_claude() -> Option<(String, Vec<String>)> {
 /// can't run it) and a `claude.cmd` shim — prefer a real .exe, then a shim,
 /// and only then fall back to the first line.
 #[cfg(any(windows, test))]
-fn pick_windows_match(where_output: &str) -> Option<(String, Vec<String>)> {
+fn pick_windows_match(where_output: &str) -> Option<String> {
     let lines: Vec<&str> =
         where_output.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     if let Some(exe) = lines.iter().find(|l| l.to_ascii_lowercase().ends_with(".exe")) {
-        return Some((exe.to_string(), Vec::new()));
+        return Some(exe.to_string());
     }
     if let Some(shim) = lines.iter().find(|l| {
         let l = l.to_ascii_lowercase();
         l.ends_with(".cmd") || l.ends_with(".bat")
     }) {
-        return Some(wrap_shim(shim));
+        return Some(shim.to_string());
     }
-    lines.first().map(|p| wrap_shim(p))
+    lines.first().map(|p| p.to_string())
 }
 
 #[cfg(not(windows))]
-fn which_claude() -> Option<(String, Vec<String>)> {
+fn which_claude() -> Option<String> {
     let out = std::process::Command::new("sh").args(["-lc", "command -v claude"]).output().ok()?;
     if !out.status.success() {
         return None;
@@ -97,7 +190,7 @@ fn which_claude() -> Option<(String, Vec<String>)> {
     if path.is_empty() {
         None
     } else {
-        Some((path, Vec::new()))
+        Some(path)
     }
 }
 
@@ -281,21 +374,43 @@ mod tests {
         // npm layout: the unrunnable bash script lists before the .cmd shim.
         let out = "C:\\Users\\u\\AppData\\Roaming\\npm\\claude\r\n\
                    C:\\Users\\u\\AppData\\Roaming\\npm\\claude.cmd\r\n";
-        let (prog, args) = pick_windows_match(out).unwrap();
-        if cfg!(windows) {
-            assert_eq!(prog, "cmd.exe");
-            assert_eq!(args[0], "/c");
-            assert!(args[1].ends_with("claude.cmd"));
-        } else {
-            assert!(prog.ends_with("claude.cmd"));
-        }
+        assert!(pick_windows_match(out).unwrap().ends_with("claude.cmd"));
 
         // A native-install .exe outranks everything.
         let out = "C:\\npm\\claude.cmd\r\nC:\\Users\\u\\.local\\bin\\claude.exe\r\n";
-        let (prog, args) = pick_windows_match(out).unwrap();
-        assert_eq!(prog, "C:\\Users\\u\\.local\\bin\\claude.exe");
-        assert!(args.is_empty());
+        assert_eq!(pick_windows_match(out).unwrap(), "C:\\Users\\u\\.local\\bin\\claude.exe");
 
         assert!(pick_windows_match("").is_none());
+    }
+
+    #[test]
+    fn configured_path_wins_and_reports_its_source() {
+        let cfg = crate::settings::AiConfig {
+            claude_path: "C:/tools/claude.exe".into(),
+            extra_args: vec![],
+        };
+        let r = resolve_claude(&cfg).unwrap();
+        assert_eq!(r.source, Source::Configured);
+        assert_eq!(r.found, "C:/tools/claude.exe");
+        assert_eq!(r.program, "C:/tools/claude.exe");
+
+        // Whitespace-only is treated as unset, not as a path.
+        let cfg = crate::settings::AiConfig { claude_path: "   ".into(), extra_args: vec![] };
+        let resolved = resolve_claude(&cfg);
+        assert!(resolved.is_none_or(|r| r.source != Source::Configured));
+    }
+
+    #[test]
+    fn probe_prefers_native_install_over_npm_shim() {
+        let c = probe_candidates();
+        assert!(!c.is_empty(), "there should always be candidates to probe");
+
+        let pos = |needle: &str| c.iter().position(|p| p.to_string_lossy().contains(needle));
+        if let (Some(native), Some(npm)) = (pos(".local"), pos("npm")) {
+            assert!(native < npm, "the native install must be probed before the npm shim");
+        }
+        // Every candidate is absolute — a relative probe would resolve against
+        // the process cwd, which is not where anyone installs a CLI.
+        assert!(c.iter().all(|p| p.is_absolute()));
     }
 }

@@ -1,6 +1,6 @@
 {
   "name": "castline",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "A local template library for any text you reuse frequently: AI prompts, email templates, notes and multi-step SOPs.",
   "private": true,
   "type": "module",

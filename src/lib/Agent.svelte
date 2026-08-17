@@ -16,7 +16,11 @@
     refreshAgentContext,
     onAiOutput,
     onAiExit,
+    setAiConfig,
+    clipCopy,
+    pickExecutable,
   } from "./api.js";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
 
   // `pending` = an instruction queued from elsewhere (e.g. Profiles → Enrich →
@@ -153,6 +157,65 @@
     }
   }
 
+  // ── "Claude Code not found" escape hatches ──
+  // Store/MSIX builds are activated by the shell broker and can inherit a PATH
+  // without the user's own additions, so auto-detection can miss an install
+  // that's plainly there. These give the user a way out, and give us something
+  // reportable when it still fails.
+  let diagOpen = $state(false);
+
+  async function recheck() {
+    status = await aiStatus();
+    flash(status?.installed ? `Found ${status.path}` : "Still not found");
+  }
+
+  async function choosePath() {
+    const path = await pickExecutable();
+    if (!path) return;
+    try {
+      // Preserve any configured extra args — this button only changes the path.
+      await setAiConfig(path, status?.extra_args || []);
+      await recheck();
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  async function clearPath() {
+    try {
+      await setAiConfig("", status?.extra_args || []);
+      await recheck();
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  function diagnosticsText() {
+    const s = status || {};
+    const lines = [
+      "Castline — Agent diagnostics",
+      `installed:  ${!!s.installed}`,
+      `source:     ${s.source || "—"}`,
+      `resolved:   ${s.path || "—"}`,
+      `program:    ${s.program || "—"}`,
+      `configured: ${s.configured || "(none)"}`,
+      `packaged:   ${!!s.packaged}${s.packaged ? " (Microsoft Store / MSIX)" : ""}`,
+      `workspace:  ${s.workspace || "—"}`,
+      "probed:",
+      ...(s.probed || []).map((p) => `  [${p.found ? "x" : " "}] ${p.path}`),
+    ];
+    return lines.join("\n");
+  }
+
+  async function copyDiag() {
+    try {
+      await clipCopy(diagnosticsText());
+      flash("Diagnostics copied");
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
   onDestroy(() => {
     ro?.disconnect();
     offOut?.();
@@ -174,17 +237,57 @@
 
   {#if status && !status.installed}
     <div class="empty-state">
-      <h3>Claude Code not found</h3>
+      <h3>Castline doesn't ship Claude Code</h3>
       <p>
-        The Agent tab embeds your own <code>claude</code> CLI and launches it in Castline's data folder,
-        where the app keeps a <code>CLAUDE.md</code> describing your <b>library</b> and <b>profiles</b> and a
-        local write endpoint — so Claude can research contacts and <b>create or enrich profiles</b> for you.
+        This tab runs the <code>claude</code> CLI <b>you</b> install, inside Castline's data folder — where
+        the app keeps a <code>CLAUDE.md</code> describing your <b>library</b> and <b>profiles</b> plus a
+        local write endpoint, so Claude can research contacts and <b>create or enrich profiles</b> for you.
+        Nothing here is sent anywhere until you install it and start it yourself.
       </p>
       <p>
-        Install it from <b>claude.ai/code</b> (or
-        <code>npm install -g @anthropic-ai/claude-code</code>), then reopen this tab. A custom binary path
-        can be set later in Settings.
+        Castline couldn't find it on this machine. Install it, or point Castline at it if you already have it.
       </p>
+
+      <div class="es-actions">
+        <button class="btn" onclick={() => openUrl("https://claude.ai/code")}>
+          Install Claude Code
+        </button>
+        <button class="ghost" onclick={choosePath}>
+          <Icon name="reveal" size={14} /> Set claude path…
+        </button>
+        <button class="ghost" onclick={recheck}>
+          <Icon name="play" size={14} /> Check again
+        </button>
+      </div>
+
+      <p class="es-npm">
+        Or from a terminal: <code>npm install -g @anthropic-ai/claude-code</code>
+      </p>
+
+      {#if status.packaged}
+        <p class="es-note">
+          This is a <b>Microsoft Store</b> install. Store builds are launched by Windows and can inherit a
+          different <code>PATH</code> than a normal install, so an existing Claude Code can go unnoticed —
+          <b>Set claude path…</b> fixes that for good.
+        </p>
+      {/if}
+
+      <button class="es-diag-toggle" onclick={() => (diagOpen = !diagOpen)}>
+        <Icon name={diagOpen ? "chevronUp" : "chevronDown"} size={13} />
+        {diagOpen ? "Hide" : "Show"} diagnostics
+      </button>
+
+      {#if diagOpen}
+        <pre class="es-diag">{diagnosticsText()}</pre>
+        <div class="es-actions">
+          <button class="ghost" onclick={copyDiag}>
+            <Icon name="copy" size={14} /> Copy diagnostics
+          </button>
+          {#if status.configured}
+            <button class="ghost" onclick={clearPath}>Clear custom path</button>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -281,5 +384,55 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     padding: 1px 5px;
+  }
+  .empty-state p {
+    margin: 0 0 12px;
+  }
+  .es-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .es-npm {
+    font-size: 12.5px;
+    color: var(--faint);
+  }
+  /* The Store-install case: the one place where "not found" is most likely a
+     PATH artefact rather than a missing install. */
+  .es-note {
+    font-size: 12.5px;
+    line-height: 1.55;
+    border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    padding-left: 10px;
+  }
+  .es-diag-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--faint);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .es-diag-toggle:hover {
+    color: var(--accent-strong);
+  }
+  .es-diag {
+    margin: 10px 0 12px;
+    padding: 10px 12px;
+    max-height: 210px;
+    overflow: auto;
+    background: var(--well);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--muted);
+    white-space: pre;
+    user-select: text;
   }
 </style>

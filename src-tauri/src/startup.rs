@@ -85,3 +85,11 @@ pub fn status(plugin_enabled: bool) -> Status {
 pub fn set(enabled: bool) -> Option<Status> {
     imp::set(enabled)
 }
+
+/// Is this a packaged (MSIX / Microsoft Store) build? Package identity is what
+/// makes the StartupTask lookup succeed at all, so the same probe answers both
+/// questions. Used to label Agent-tab diagnostics, where Store installs behave
+/// differently from a plain `.exe`.
+pub fn is_packaged() -> bool {
+    imp::status().is_some()
+}

@@ -33,7 +33,7 @@
   <Identity
     Name="Ravando.Castline"
     Publisher="CN=0FDF4166-D594-445A-AC0D-659012821ABB"
-    Version="1.1.3.0"
+    Version="1.2.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>

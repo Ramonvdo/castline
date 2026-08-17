@@ -188,6 +188,18 @@ pub struct AppSettings {
     pub llm: LlmConfig,
     #[serde(default)]
     pub schedules: Vec<Schedule>,
+    /// Has the user been offered the first-run walkthrough? Set once, whichever
+    /// way they answer, so the welcome prompt never reappears. Lives here rather
+    /// than in localStorage because a packaged build's WebView2 profile can be
+    /// reset by an update — which would re-greet an existing user.
+    ///
+    /// Defaults to **true** when absent, which is the upgrade case: that file
+    /// was written by a version predating this field, so its owner has been
+    /// using Castline for a while and shouldn't be welcomed as a new install.
+    /// A genuine first run has no file at all and goes through
+    /// `AppSettings::default()` below, which sets it false.
+    #[serde(default = "default_true")]
+    pub tour_seen: bool,
 }
 
 impl Default for AppSettings {
@@ -200,6 +212,7 @@ impl Default for AppSettings {
             ai: AiConfig::default(),
             llm: LlmConfig::default(),
             schedules: Vec::new(),
+            tour_seen: false,
         }
     }
 }
@@ -326,6 +339,23 @@ mod tests {
         assert_eq!(s.http.port, 8787);
         assert!(s.http.token.is_empty());
         assert!(s.ai.claude_path.is_empty());
+    }
+
+    #[test]
+    fn only_a_genuine_first_run_gets_the_welcome_prompt() {
+        // No settings.json at all — a real first install.
+        assert!(!AppSettings::default().tour_seen);
+
+        // A file written before the field existed belongs to an existing user,
+        // who must not be greeted as a new install.
+        let upgraded: AppSettings = serde_json::from_str(r#"{ "theme": "dark" }"#).unwrap();
+        assert!(upgraded.tour_seen);
+
+        // Once written, the stored answer wins either way.
+        let answered: AppSettings = serde_json::from_str(r#"{ "tour_seen": false }"#).unwrap();
+        assert!(!answered.tour_seen, "a first-run quit before answering must re-prompt");
+        let answered: AppSettings = serde_json::from_str(r#"{ "tour_seen": true }"#).unwrap();
+        assert!(answered.tour_seen);
     }
 
     fn sched(every: &str, last_run: i64, catch_up: bool) -> Schedule {

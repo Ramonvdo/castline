@@ -389,9 +389,15 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="overlay" onclick={(e) => e.target === e.currentTarget && tryClose()}>
-  <div class="modal wide">
+  <div class="modal wide" data-tour="fill-modal">
     <h3>
-      {activeProfile ? "Preview" : isSop ? "Copy step-by-step" : "Fill & copy"} —
+      {activeProfile
+        ? "Preview"
+        : isSop
+          ? "Copy step-by-step"
+          : itemVars(item).length
+            ? "Fill & copy"
+            : "Preview"} —
       {item.name}
     </h3>
 

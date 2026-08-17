@@ -96,7 +96,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="overlay top" onclick={(e) => e.target === e.currentTarget && onClose()}>
-  <div class="palette">
+  <div class="palette" data-tour="palette">
     <div class="qhead">
       <Icon name="search" size={17} />
       <input

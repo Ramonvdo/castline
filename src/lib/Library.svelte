@@ -46,6 +46,11 @@
     // Surfaced so a blueprint dropped on the window defaults to the folder
     // you're actually looking at (null while in All / Pinned).
     currentFolderId = $bindable(null),
+    // The card the walkthrough spotlights. It's whatever the user happens to
+    // have first, so the tour has to describe *that* item rather than assume
+    // the seeded one — telling someone to fill blanks a template doesn't have
+    // is worse than saying nothing.
+    onFirstItem = () => {},
   } = $props();
 
   // View density: compact drops previews/tags; super shows name-only cards
@@ -150,6 +155,22 @@
   // "manual" honours stored/drag order; "used" surfaces the most-copied items.
   let sortMode = $state("manual");
 
+  // Report the card the walkthrough will point at, so its copy can describe the
+  // item that's actually there. Only fires on a real change: the callback writes
+  // parent state, and re-notifying on every pass would loop through the parent
+  // and straight back into this effect.
+  let lastFirst = "";
+  $effect(() => {
+    const it = visible[0]?.item || null;
+    const vars = it ? itemVars(it) : [];
+    const key = it ? `${it.id}|${it.name}|${it.kind}|${vars.join(",")}` : "";
+    if (key === lastFirst) return;
+    lastFirst = key;
+    onFirstItem(
+      it ? { name: it.name, kind: it.kind, vars: vars.length, firstVar: vars[0] || "" } : null,
+    );
+  });
+
   function toggleTag(t) {
     selectedTags = selectedTags.includes(t)
       ? selectedTags.filter((x) => x !== t)
@@ -236,7 +257,12 @@
   let dropOnId = $state(null); // card highlighted (insertion)
   let dropAfter = $state(false);
 
+  // When a drag ends. Browsers don't fire click after a drag, but a cancelled
+  // drag on some paths does — the stamp lets cardClick ignore that stray click
+  // so releasing a reordered card never opens its preview.
+  let draggedAt = 0;
   function clearDrag() {
+    if (drag) draggedAt = Date.now();
     drag = null;
     dropFolderId = null;
     dropOnId = null;
@@ -600,13 +626,24 @@
       : [...selected, id];
   }
   function cardClick(e, item) {
-    // Ctrl/Cmd + click toggles multi-select (drag handles move/reorder; the Copy
-    // button copies). A plain click does nothing.
+    // Ctrl/Cmd + click toggles multi-select; a plain click opens the item so it
+    // can be read. The card's own buttons (Copy/View/pin/edit/…) handle
+    // themselves, and a click landing right after a drag is the drag's release,
+    // not an open.
     if (e.target.closest && e.target.closest("button")) return;
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       toggleSelect(item.id);
+      return;
     }
+    if (drag || Date.now() - draggedAt < 200) return;
+    openView(item);
+  }
+
+  // The one way an item is opened for reading/filling — shared by the card's
+  // View button and a plain click on the card body.
+  function openView(item) {
+    onFill(item, item.kind === "sop" ? "steps" : "auto");
   }
   function clearSelection() {
     selected = [];
@@ -787,7 +824,7 @@
 
 <div class="layout">
   <!-- Folder rail -->
-  <aside class="rail">
+  <aside class="rail" data-tour="rail">
     <div class="virt-row">
       <button
         class="virt"
@@ -895,7 +932,7 @@
           </div>
         {/if}
       </div>
-      <button class="btn with-ic" onclick={openNewItem}
+      <button class="btn with-ic" data-tour="new-item" onclick={openNewItem}
         ><Icon name="plus" size={15} /> New item</button
       >
     </div>
@@ -947,7 +984,7 @@
       </p>
     {:else}
       <div class="grid">
-        {#each visible as { item, folderId, folderName, folderColor } (item.id)}
+        {#each visible as { item, folderId, folderName, folderColor }, i (item.id)}
           {@const vars = itemVars(item)}
           {@const pos = selIndex(item.id)}
           {@const missing = activeProfile ? unfilledIn(item) : []}
@@ -965,6 +1002,7 @@
             class:drop-before={dropOnId === item.id && !dropAfter}
             class:drop-after={dropOnId === item.id && dropAfter}
             style:--fcolor={folderColor || "var(--border)"}
+            data-tour={i === 0 ? "card" : null}
             draggable="true"
             ondragstart={(e) => {
               drag = { kind: "item", id: item.id, fromFolderId: folderId };
@@ -1074,7 +1112,7 @@
               {/if}
             {/if}
 
-            <footer>
+            <footer data-tour={i === 0 ? "card-actions" : null}>
               <button
                 class="act"
                 class:filled={ready}
@@ -1087,16 +1125,18 @@
                 ><Icon name="copy" size={13} />
                 <span class="act-t">Copy</span></button
               >
-              {#if vars.length || item.kind === "sop"}
-                <button
-                  class="act primary"
-                  onclick={() =>
-                    onFill(item, item.kind === "sop" ? "steps" : "auto")}
-                >
-                  <Icon name="eye" size={13} />
-                  <span class="act-t">View</span>
-                </button>
-              {/if}
+              <!-- Always offered: an item with no {{variables}} still needs a
+                   way to be read, and the edit pencil is hover-only. -->
+              <button
+                class="act primary"
+                title={vars.length
+                  ? "Fill the variables, preview, then copy"
+                  : "Read the full text, then copy"}
+                onclick={() => openView(item)}
+              >
+                <Icon name="eye" size={13} />
+                <span class="act-t">{vars.length ? "Fill" : "View"}</span>
+              </button>
             </footer>
           </article>
         {/each}

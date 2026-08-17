@@ -107,6 +107,12 @@ export const aiStop = () => invoke("ai_stop");
 export const refreshAgentContext = () => invoke("refresh_agent_context");
 export const setAiConfig = (claudePath, extraArgs) => invoke("set_ai_config", { claudePath, extraArgs });
 
+// ── Onboarding ──
+// Recorded once the walkthrough has been offered, so the welcome prompt never
+// reappears. Lives in settings.json (not localStorage) so it survives a Store
+// update resetting the WebView2 profile.
+export const setTourSeen = (seen) => invoke("set_tour_seen", { seen });
+
 // ── Live events from the Rust side ──
 export const onProfilesChanged = (cb) => listen("profiles-changed", (e) => cb(e.payload));
 export const onLibraryChanged = (cb) => listen("library-changed", (e) => cb(e.payload));
@@ -142,6 +148,20 @@ export async function pickContextFile() {
   const path = await open({
     multiple: false,
     filters: [{ name: "Text / Markdown", extensions: ["txt", "md"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+// The `claude` binary, for the Agent tab's explicit-path escape hatch. The
+// "All files" group matters: on macOS/Linux the binary has no extension, and on
+// Windows an npm install is a `.cmd` shim while the native installer is a `.exe`.
+export async function pickExecutable() {
+  const path = await open({
+    multiple: false,
+    filters: [
+      { name: "Executable", extensions: ["exe", "cmd", "bat"] },
+      { name: "All files", extensions: ["*"] },
+    ],
   });
   return typeof path === "string" ? path : null;
 }

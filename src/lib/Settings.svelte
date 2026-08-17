@@ -18,6 +18,9 @@
     pickDirectory,
     getSettings,
     getProfiles,
+    setAiConfig,
+    aiStatus,
+    pickExecutable,
   } from "./api.js";
   import { allLibraryVars } from "./vars.js";
   import Icon from "./Icon.svelte";
@@ -29,8 +32,43 @@
     onLibraryData,
     onProfilesData,
     onSettings = () => {},
+    onReplayTour = () => {},
   } = $props();
   let dataDir = $state("");
+
+  // ── AI agent binary ──
+  // `setAiConfig` has existed since the Agent tab shipped but nothing ever
+  // called it, so the "set a path in Settings" the Agent tab pointed at didn't
+  // exist. It matters most on Store builds, where auto-detection can miss an
+  // install because of the PATH Windows hands a packaged app.
+  let claudePath = $state("");
+  let aiExtraArgs = [];
+  let aiProbe = $state(null); // last aiStatus() result, shown as feedback
+
+  async function saveClaudePath() {
+    try {
+      await setAiConfig(claudePath.trim(), aiExtraArgs);
+      await testClaudePath();
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  async function browseClaudePath() {
+    const p = await pickExecutable();
+    if (!p) return;
+    claudePath = p;
+    await saveClaudePath();
+  }
+
+  async function testClaudePath() {
+    try {
+      aiProbe = await aiStatus();
+      flash(aiProbe.installed ? `Found ${aiProbe.path}` : "claude not found");
+    } catch (e) {
+      flash(String(e));
+    }
+  }
 
   // ── Variables (descriptions = AI context) ──
   let descs = $state({}); // name -> description (editable copy)
@@ -158,6 +196,9 @@
     llmWeb = !!s.llm?.web_search;
     llmTone = s.llm?.tone || "";
     schedules = (s.schedules || []).map((x) => ({ ...x }));
+    claudePath = s.ai?.claude_path || "";
+    aiExtraArgs = s.ai?.extra_args || [];
+    aiProbe = await aiStatus();
 
     const p = await getProfiles();
     storedDescs = p.descriptions || {};
@@ -608,6 +649,47 @@
     </div>
   </section>
 
+  <section class="panel">
+    <h4>AI agent (Claude Code)</h4>
+    <p class="hint">
+      The <strong>Agent</strong> tab runs the <code>claude</code> CLI you install yourself. Castline finds
+      it automatically — set a path here only if it can't, or to pin a specific install.
+    </p>
+    <div class="aipath">
+      <input
+        class="field"
+        bind:value={claudePath}
+        onchange={saveClaudePath}
+        placeholder="Auto-detect"
+      />
+      <button class="ghost" onclick={browseClaudePath}
+        ><Icon name="reveal" size={14} /> Browse…</button
+      >
+      <button class="ghost" onclick={testClaudePath}>Test</button>
+    </div>
+    {#if aiProbe}
+      <p class="hint" class:ok={aiProbe.installed}>
+        {#if aiProbe.installed}
+          Found via {aiProbe.source} — <code>{aiProbe.path}</code>
+        {:else}
+          Not found. Open the <strong>Agent</strong> tab for install options and full diagnostics.
+        {/if}
+      </p>
+    {/if}
+  </section>
+
+  <section class="panel">
+    <h4>Tutorial</h4>
+    <p class="hint">
+      Replay the guided walkthrough of the library, <code>{"{{variables}}"}</code>, profiles and quick find.
+    </p>
+    <div class="sched-actions">
+      <button class="ghost" onclick={onReplayTour}
+        ><Icon name="play" size={14} /> Replay the tutorial</button
+      >
+    </div>
+  </section>
+
   <section class="panel about">
     <p>
       <strong>Note: </strong> Your data lives in portable JSON files on this machine.
@@ -917,6 +999,23 @@
     display: flex;
     justify-content: space-between;
     gap: 8px;
+  }
+  .aipath {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .aipath .field {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+  }
+  .hint.ok {
+    color: var(--accent-strong);
+  }
+  .hint.ok code {
+    color: var(--accent-strong);
   }
   .confirm-overlay {
     position: fixed;

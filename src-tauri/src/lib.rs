@@ -553,13 +553,32 @@ fn write_agent_context(app: &AppHandle) {
 }
 
 /// Status for the Agent tab: is claude installed, where, which workspace, running?
+///
+/// Also returns enough diagnostics for a user to self-serve when it says "not
+/// found" — how it was located, whether this is a packaged (Store/MSIX) build,
+/// and every location that was checked. Store installs are the ones that report
+/// "not found" on machines where claude is installed, and without this there is
+/// nothing for them to send back.
 #[tauri::command]
 fn ai_status(app: AppHandle) -> serde_json::Value {
     let ai_cfg = app.state::<SettingsState>().snapshot().ai;
     let resolved = ai::resolve_claude(&ai_cfg);
+    let probed: Vec<serde_json::Value> = ai::probe_candidates()
+        .into_iter()
+        .map(|p| {
+            serde_json::json!({ "path": p.to_string_lossy(), "found": p.is_file() })
+        })
+        .collect();
     serde_json::json!({
         "installed": resolved.is_some(),
-        "path": resolved.map(|(p, _)| p),
+        "path": resolved.as_ref().map(|r| r.found.clone()),
+        "program": resolved.as_ref().map(|r| r.program.clone()),
+        "source": resolved.as_ref().map(|r| r.source.as_str()),
+        "configured": ai_cfg.claude_path,
+        // So a caller changing only the path can write the args back unchanged.
+        "extra_args": ai_cfg.extra_args,
+        "packaged": startup::is_packaged(),
+        "probed": probed,
         "workspace": settings::app_data_dir().to_string_lossy().into_owned(),
         "running": ai::is_running(&app),
     })
@@ -574,10 +593,10 @@ fn ai_start(app: AppHandle, rows: u16, cols: u16) -> Result<(), String> {
     ensure_endpoint_for_agent(&app);
     write_agent_context(&app);
     let ai_cfg = app.state::<SettingsState>().snapshot().ai;
-    let (prog, mut args) = ai::resolve_claude(&ai_cfg)
+    let mut resolved = ai::resolve_claude(&ai_cfg)
         .ok_or("claude CLI not found — install Claude Code or set a path in Settings".to_string())?;
-    args.extend(ai_cfg.extra_args.clone());
-    ai::start(&app, &prog, &args, &root, rows, cols)
+    resolved.args.extend(ai_cfg.extra_args.clone());
+    ai::start(&app, &resolved.program, &resolved.args, &root, rows, cols)
 }
 
 #[tauri::command]
@@ -599,6 +618,19 @@ fn ai_stop(app: AppHandle) {
 fn refresh_agent_context(app: AppHandle) -> Result<(), String> {
     write_agent_context(&app);
     Ok(())
+}
+
+/// Record that the first-run walkthrough has been offered (or replayed), so the
+/// welcome prompt only ever appears once.
+#[tauri::command]
+fn set_tour_seen(app: AppHandle, seen: bool) -> AppSettings {
+    let state = app.state::<SettingsState>();
+    {
+        let mut s = state.data.lock().unwrap();
+        s.tour_seen = seen;
+    }
+    state.save();
+    state.snapshot()
 }
 
 #[tauri::command]
@@ -1048,6 +1080,7 @@ pub fn run() {
             ai_stop,
             refresh_agent_context,
             set_ai_config,
+            set_tour_seen,
             get_data_dir,
             reveal_data_dir,
             export_library_to,

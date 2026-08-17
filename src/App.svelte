@@ -8,6 +8,7 @@
   import Settings from "./lib/Settings.svelte";
   import FillCopy from "./lib/FillCopy.svelte";
   import BlueprintImport from "./lib/BlueprintImport.svelte";
+  import Tour from "./lib/Tour.svelte";
   import Icon from "./lib/Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
@@ -18,6 +19,7 @@
     onLibraryChanged,
     onScheduleRan,
     storageWarnings,
+    setTourSeen,
   } from "./lib/api.js";
 
   const appWindow = getCurrentWindow();
@@ -47,6 +49,12 @@
     localStorage.getItem("castline-view") ||
       (localStorage.getItem("castline-compact") === "1" ? "compact" : "full"),
   );
+  // Set the density without persisting — the tour borrows full cards for its
+  // duration and hands the user's choice back, so a crash mid-tour must not
+  // leave "full" written over their preference.
+  function setViewMode(m) {
+    viewMode = m;
+  }
   function cycleView() {
     viewMode =
       viewMode === "full"
@@ -97,6 +105,21 @@
     toast = m;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (toast = ""), ms);
+    // The tour's "copy it to continue" gate watches this: every copy path in
+    // the app flashes, so one counter covers cards, the fill modal and Ctrl+K
+    // without threading a callback through each of them.
+    if (/^Copied/i.test(m)) copyCount += 1;
+  }
+
+  // ── First-run walkthrough ──
+  let tour = $state(null); // bound Tour component
+  let copyCount = $state(0);
+  // The card the tour spotlights, so its copy describes that item rather than
+  // the seeded example.
+  let firstItem = $state(null);
+  function replayTour() {
+    view = "library";
+    tour?.start();
   }
 
   // A store failed to load (e.g. a corrupt file was quarantined). This is a
@@ -119,15 +142,20 @@
     library = await getLibrary();
     profiles = await getProfiles();
 
-    // Show store-load problems only once the window is actually on screen — an
-    // autostart launch starts hidden in the tray, and a warning drained into a
-    // hidden window would be lost. Defer to the first time it's shown/focused.
-    if (await appWindow.isVisible()) {
+    // Two things must wait for the window to actually be on screen: a store-load
+    // warning, and the first-run welcome prompt. An autostart launch starts
+    // hidden in the tray, and either one fired into a hidden window is simply
+    // lost. Defer both to the first time it's shown/focused.
+    const onFirstShown = () => {
       drainStoreWarnings();
+      if (!settings.tour_seen) tour?.offerWelcome();
+    };
+    if (await appWindow.isVisible()) {
+      onFirstShown();
     } else {
       const unShown = await appWindow.onFocusChanged(({ payload: focused }) => {
         if (focused) {
-          drainStoreWarnings();
+          onFirstShown();
           unShown();
         }
       });
@@ -253,6 +281,7 @@
           <button
             class="navlink"
             class:active={view === n.id}
+            data-tour={"nav-" + n.id}
             onclick={() => (view = n.id)}>{n.label}</button
           >
         {/each}
@@ -261,7 +290,7 @@
 
     <div class="right">
       <!-- Active profile selector -->
-      <div class="profsel">
+      <div class="profsel" data-tour="profsel">
         <button
           class="profbtn"
           class:on={activeProfile}
@@ -339,7 +368,11 @@
         <Icon name="shield" size={16} />
       </button>
 
-      <button class="ghost search-cta" onclick={() => (quickOpen = true)}>
+      <button
+        class="ghost search-cta"
+        data-tour="quickfind"
+        onclick={() => (quickOpen = true)}
+      >
         <Icon name="command" size={15} /><span>Search</span><kbd>Ctrl K</kbd>
       </button>
 
@@ -371,6 +404,7 @@
         onFill={openFill}
         onBlueprintText={(t) => (pendingBlueprint = t)}
         bind:currentFolderId={libraryFolderId}
+        onFirstItem={(x) => (firstItem = x)}
       />
     {:else if view === "profiles"}
       <Profiles
@@ -399,6 +433,7 @@
         onLibraryData={(d) => (library = d)}
         onProfilesData={(d) => (profiles = d)}
         onSettings={(s) => (settings = s)}
+        onReplayTour={replayTour}
       />
     {/if}
     <!-- Agent stays mounted so the terminal survives tab switches -->
@@ -465,6 +500,22 @@
 {#if dragging}
   <div class="dropzone"><span>Drop a blueprint to import</span></div>
 {/if}
+
+<Tour
+  bind:this={tour}
+  {view}
+  {quickOpen}
+  {fillItem}
+  {copyCount}
+  {viewMode}
+  {firstItem}
+  profileCount={profiles.profiles.length}
+  onView={(v) => (view = v)}
+  onViewMode={setViewMode}
+  onCloseFill={() => (fillItem = null)}
+  onCloseQuickOpen={() => (quickOpen = false)}
+  onFinish={() => setTourSeen(true).catch(() => {})}
+/>
 
 <style>
   /* Purely a hint — never intercepts the drop itself. */

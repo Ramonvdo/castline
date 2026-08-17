@@ -493,7 +493,7 @@
   }
 </script>
 
-<div class="view">
+<div class="view" data-tour="profiles-view">
   {#if editingId === null}
     <div class="view-head">
       <h2>Profiles</h2>
@@ -524,7 +524,7 @@
         <button class="ghost" onclick={() => (showPaste = !showPaste)}
           >Paste JSON…</button
         >
-        <button class="btn" onclick={newProfile}
+        <button class="btn" data-tour="new-profile" onclick={newProfile}
           ><Icon name="plus" size={14} /> New profile</button
         >
       </div>
