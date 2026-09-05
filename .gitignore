@@ -34,6 +34,10 @@ devcert*
 .env.*
 !.env.example
 
+# Skill runtime config — written next to a skill on first run (e.g. which CRM
+# to sync from). Machine-specific, and names the env var holding a credential.
+*.local.json
+
 # Personal / private notes (never commit — this repo is public)
 future-steps.md
 # Store submission notes: listing copy, Partner Center identity, packaging runbook.

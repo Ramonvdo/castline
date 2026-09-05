@@ -318,6 +318,45 @@ go in `MEMORY.md`, which Castline never overwrites.
 Requires Claude Code installed (`npm install -g @anthropic-ai/claude-code`, or from **claude.ai/code**).
 Starting the Agent turns the HTTP endpoint on automatically so the agent has a write path.
 
+## Claude Code skills → drive Castline from any session
+
+The Agent tab above works **inside** Castline. The skills in [`skills/`](skills/) are the other half:
+install them once and Claude Code can work with your library from **any** session, in any folder, not
+just the embedded terminal.
+
+| Command | What it does |
+|---|---|
+| `/castline "<request>"` | The umbrella. Reads your real library, then writes templates, emails and SOPs as importable blueprints, or creates and enriches profiles through the local endpoint. |
+| `/castline-crm-sync` | Pulls contacts from your CRM into profiles: creates the ones that don't exist, enriches the ones that do. Asks which CRM on first run and remembers it. |
+| `/castline-vars` | Every `{{variable}}` in use, near-duplicate spellings that silently split profiles, and which variables lack a description. |
+| `/castline-audit` | Library hygiene: duplicates, email items missing `type: "email"` and a subject, unused items, inconsistent tags. |
+| `/castline-sop` | Turns a described process into a proper multi-step SOP with ordered steps and variables threaded through. |
+| `/castline-create-skill` | Mines your library for content worth turning into a Claude skill, ranked by real `uses`. |
+
+### Install
+
+Copy them into your personal skills directory. **Install the whole set**: the other five read shared
+schema and rules from `castline/reference.md`.
+
+```bash
+git clone https://github.com/Ramonvdo/castline.git
+cp -r castline/skills/castline*  ~/.claude/skills/
+```
+
+On Windows the target is `C:\Users\<you>\.claude\skills\`. Restart Claude Code and the commands appear.
+
+### Two things worth knowing
+
+- **Anything that writes profiles needs the inbound HTTP endpoint on.** Toggle it in
+  **Connectors → HTTP endpoint (inbound)**, or just open the **Agent** tab, which turns it on for you.
+  The skills check first and tell you if it's off, rather than failing with a connection error.
+- **The Store build moves your data.** On an MSIX install `%APPDATA%\Castline` is empty and the real
+  folder lives under `%LOCALAPPDATA%\Packages\Ravando.Castline_*\LocalCache\Roaming\Castline\`. The
+  skills resolve this automatically; it's only worth knowing if you go looking by hand.
+
+The skills never hand-edit `library.json` or `profiles.json`. Library items arrive as blueprints you
+import, profiles go through the endpoint, and locked variables are never written by anything.
+
 ## Cutting a release
 
 Version lives in three files — keep them in sync, then tag:
@@ -351,6 +390,7 @@ castline/
     ai.rs              embedded claude PTY (portable-pty) + reader/emitter threads
     agent.rs           generates the agent's CLAUDE.md / MEMORY.md
     lib.rs             Tauri commands + app setup + store file-watcher
+  skills/              Claude Code skills for driving Castline from any session
 ```
 
 ## Tech stack
