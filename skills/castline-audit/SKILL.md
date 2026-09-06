@@ -45,12 +45,17 @@ duplicate that skill's full report.
 
 ### 4. Dead weight
 
-Items with `uses: 0` and a `created_at` more than a few months old. These are the library's
-clutter, and clutter is what makes quick-find slower to scan.
+**Check the distribution before running this check at all.** In most real libraries the majority of
+items sit at `uses: 0`, because people paste from quick-find, add things in batches, or save a
+prompt before they need it. If most of the library is at zero, `uses: 0` is the norm and listing it
+is noise, not a finding. Say so and skip to the next check.
 
-Never recommend deleting on the count alone. A template can be new, seasonal, or a reference note
-that is read in the app rather than copied. Present them as candidates with their age and folder,
-and let the user judge.
+Only report dead weight when zero-use items are a genuine minority, and even then rank by age and
+require a `created_at` well in the past. A template can be new, seasonal, or a reference note that
+is read in the app rather than copied.
+
+Never recommend deleting on the count alone. Present candidates with their age and folder and let
+the user judge.
 
 ### 5. Tag inconsistency
 
