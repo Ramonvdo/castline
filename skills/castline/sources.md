@@ -4,8 +4,8 @@ Bibliography for the whole `castline-*` suite: `castline`, `castline-crm-sync`,
 `castline-create-skill`, `castline-audit`, `castline-sop`, `castline-vars`. One file for six skills,
 because six near-identical bibliographies would be noise.
 
-Everything was read from `Ramonvdo/castline` at the state of the default branch on 2026-09-05
-(last pushed 2026-08-17) and from a live Microsoft Store install on this machine.
+Everything was read from Castline's source at the state of the default branch on 2026-09-05
+(last pushed 2026-08-17) and from a live Microsoft Store install.
 
 ## Included
 
@@ -61,16 +61,17 @@ webhook, and **locked variables**, described there as perfect for personal notes
 human. Also the email item type having a separate subject that webhook payloads map independently,
 which is why `/castline-audit` treats an untyped email as a real defect rather than cosmetics.
 
-### The live install
-Inspected 2026-09-05, structure and counts only.
+### A live install
+Inspected 2026-09-05, structure only.
 
 Contributed the **MSIX path redirection**, which is the fact most likely to break a naive skill:
 `%APPDATA%\Castline` is empty on a Store install and the real store is under
 `%LOCALAPPDATA%\Packages\Ravando.Castline_36ex7sfbaqfcj\LocalCache\Roaming\Castline\`.
 
-Also the current state the skills are designed against: HTTP endpoint disabled on port 8787, zero
-profiles, 77 items across 17 folders (67 templates, 10 SOPs, 3 email-type), and 74 of 77 items with
-no `type` set, which is why the untyped-email check leads the audit.
+Also two defaults the skills are designed around. The inbound HTTP endpoint ships disabled, which is
+why every profile write starts with a preflight instead of a POST that fails confusingly. And `type`
+is opt-in per item, so most items in a real library never get it, which is why the untyped-email
+check leads the audit rather than sitting at the bottom as a footnote.
 
 ## Not read, and therefore not relied on
 
@@ -92,6 +93,5 @@ start by reading it.
   is what the hard rules forbid. `/castline-audit` proposes and the user deletes in the app.
 - **Skill authoring.** `/castline-create-skill` finds and ranks candidates, then hands to
   `/expert-skill`, which researches real sources and stops for approval before writing.
-- **Customer-facing copy standards.** The `humanizer` skill owns those. The suite defers to it, and
-  to the no-em-dash rule that the user's global instructions and Castline's own configured LLM tone
-  both state.
+- **Customer-facing copy standards.** Out of scope. The suite defers to whatever prose-editing skill
+  is installed, such as `humanizer`, and to the tone configured in `settings.json.llm.tone`.

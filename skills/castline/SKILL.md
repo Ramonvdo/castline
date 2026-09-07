@@ -51,8 +51,9 @@ The common case, for example "make some cold email copy and add it to Castline":
 2. Decide the kind. Email copy is `kind: "template"` with `type: "email"` and a **separate
    `subject`**, because webhook payloads map subject and body independently. A process is
    `kind: "sop"` with ordered `steps[]`.
-3. Write the copy. For anything a customer will read, load the `humanizer` skill first. No em
-   dashes, which is both the user's global rule and Castline's own configured LLM tone.
+3. Write the copy. Read `settings.json.llm.tone` and follow the tone set there. Castline ships with
+   a starter tone that rules out em dashes, so prefer commas, colons and periods unless the
+   configured tone says otherwise.
 4. Variabilise it. Anything that changes per send becomes a `{{variable}}`, reusing existing names
    exactly. Use `{{today}}` and `{{now}}` rather than inventing date variables.
 5. Write the `.castline.json` blueprint somewhere the user can reach, never inside Castline's data
@@ -94,6 +95,7 @@ The common case, for example "make some cold email copy and add it to Castline":
   profile enrichment inside the app's own terminal. This skill is the complement: it works in any
   session, anywhere, and covers authoring, auditing and variable hygiene that the built-in guide
   does not.
-- **Real customer-facing copy goes through `humanizer` first.** That is the user's standard.
+- **Copy quality is not this skill's job.** If a prose-editing skill such as `humanizer` is
+  installed, run customer-facing copy through it before the blueprint gets written.
 - **This skill does not send anything.** Castline sends, via its connectors and schedules. You
   author and you populate.

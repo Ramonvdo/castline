@@ -1,7 +1,7 @@
 # Castline reference
 
-The shared factual spine for every `castline-*` skill. Everything here was read from the source of
-`Ramonvdo/castline` and from a live install. Do not restate it in the other skills; point here.
+The shared factual spine for every `castline-*` skill. Everything here was read from Castline's own
+source and from a live install. Do not restate it in the other skills; point here.
 
 Castline is a local-first Tauri desktop app: a library of reusable text (prompts, email templates,
 notes, multi-step SOPs) with `{{variables}}`, plus reusable **profiles** (named sets of variable
@@ -17,7 +17,7 @@ Check in this order and use the first that contains `library.json`:
 ```
 1. MSIX (Store build), Windows:
    %LOCALAPPDATA%\Packages\Ravando.Castline_<pubhash>\LocalCache\Roaming\Castline\
-   The publisher hash is stable per publisher. On this machine:
+   The publisher hash is derived from the publisher, so it is identical on every Store install:
    Ravando.Castline_36ex7sfbaqfcj
 
 2. Plain install, Windows:

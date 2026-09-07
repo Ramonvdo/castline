@@ -14,14 +14,19 @@ Read `../castline/reference.md` first for the data directory, the schemas and th
 Optional focus: **$ARGUMENTS**
 
 This skill **finds the cluster and designs the skill**, especially its onboarding. It hands the
-design to `/expert-skill` to build. It does not write the skill itself.
+design to a skill-authoring skill to build. It does not write the skill itself.
+
+The intended handoff is `/expert-skill`, which researches external sources and stops for approval
+before writing. It is a separate, optional install. If the user does not have it, hand the same
+design to whatever authoring flow they do have, or write the skill from the design directly and say
+that the research step was skipped.
 
 ## The shape you are looking for
 
 Several items, usually in one folder, that do the same job for different subjects or in different
 styles, each with `{{variables}}` standing in for the subject.
 
-A real example from a live library, the "Website design" folder:
+A worked example. A "Website design" folder holding:
 
 ```
 URL-to-Website         {{URL}}
@@ -38,7 +43,7 @@ variant, and whose remaining questions are the variables.
 
 **Do not rank on `uses` alone.** In a real library most items sit at zero, because people paste
 from quick-find, add things in batches, or save a prompt before using it. Ranking on `uses` will
-hand you the most-copied one-liner and hide the 31,000-character methodology that is the actual
+hand you the most-copied one-liner and bury the long methodology document that is the actual
 skill. Use these instead:
 
 1. **Cluster size.** Several items doing one job with a shared variable vocabulary. This is the

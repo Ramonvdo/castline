@@ -80,12 +80,12 @@ Import is the user's action, not yours. Do not attempt to simulate a drop or pok
 
 ## Writing copy that does not sound like a machine
 
-When the request is email or marketing copy, the user's global instructions and Castline's own LLM
-tone setting agree on this, so follow both:
+When the request is email or marketing copy, read `settings.json.llm.tone` and follow it. Castline
+ships with a starter tone that says:
 
 - **No em dashes.** Use commas, colons or periods.
 - No clichés, no corporate filler, no hedging that sounds like an assistant.
 - Straight to the point, original phrasing.
 
-For anything that will be read by a customer, load the `humanizer` skill and apply it before
-writing the blueprint. It is installed and it is the user's stated standard for real copy.
+For anything a customer will read, run the copy through a prose-editing skill such as `humanizer`
+before writing the blueprint, if one is installed.
